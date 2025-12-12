@@ -19,11 +19,12 @@ type UserRepository interface {
 	Update(ctx context.Context, user *domain.User) (*domain.User, error)
 	Delete(ctx context.Context, id int64) error
 }
-
+// менять
 type userService struct {
 	repo UserRepository
+	
 }
-
+// менять
 func NewUserService(repo UserRepository) UserService {
 	return &userService{repo: repo}
 }
