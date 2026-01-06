@@ -27,6 +27,8 @@ type Server struct {
 	logger      *slog.Logger
 }
 
+//нужно зарегстрировать grpc сервер, его нужно собрать в app.go
+
 func NewServer(userService UserService, logger *slog.Logger) *Server {
 
 	if logger == nil {
