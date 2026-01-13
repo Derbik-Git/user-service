@@ -1,4 +1,4 @@
-package app
+package server
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"github.com/Derbik-Git/user-service/internal/domain"
 	errorsx "github.com/Derbik-Git/user-service/internal/errors"
 	"github.com/Derbik-Git/user-service/internal/sl"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -23,11 +24,22 @@ type UserService interface {
 
 type Server struct {
 	userv1.UnimplementedUserServiceServer
-	userService UserService
+	UserService UserService
 	logger      *slog.Logger
 }
 
-//нужно зарегстрировать grpc сервер, его нужно собрать в app.go
+// нужно зарегстрировать grpc сервер, его нужно собрать в app.go
+func RegisterServer(gRPC *grpc.Server, userService UserService, logger *slog.Logger) {
+	if logger == nil {
+		logger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	}
+
+	userv1.RegisterUserServiceServer(gRPC, &Server{
+		UserService: userService,
+		logger:      logger,
+	},
+	)
+}
 
 func NewServer(userService UserService, logger *slog.Logger) *Server {
 
@@ -36,7 +48,7 @@ func NewServer(userService UserService, logger *slog.Logger) *Server {
 	}
 
 	return &Server{
-		userService: userService,
+		UserService: userService,
 		logger:      logger,
 	}
 }
@@ -49,7 +61,7 @@ func (s *Server) GetUser(ctx context.Context, req *userv1.GetUserRequest) (*user
 		return nil, status.Error(codes.InvalidArgument, "id must be > 0")
 	}
 
-	usr, err := s.userService.GetUser(ctx, req.GetId())
+	usr, err := s.UserService.GetUser(ctx, req.GetId())
 	if err != nil {
 		s.logger.Warn("get user failed", slog.String("op", op), sl.Err(err))
 		return nil, errorsx.ToGRPC(err)
@@ -78,7 +90,7 @@ func (s *Server) CreateUser(ctx context.Context, req *userv1.CreateUserRequest) 
 		return nil, status.Error(codes.InvalidArgument, "name is required")
 	}
 
-	usr, err := s.userService.CreateUser(ctx, req.GetEmail(), req.GetName())
+	usr, err := s.UserService.CreateUser(ctx, req.GetEmail(), req.GetName())
 	if err != nil {
 		s.logger.Error("CreateUser failed", slog.String("op", op), sl.Err(err))
 		return nil, errorsx.ToGRPC(err)
@@ -94,7 +106,7 @@ func (s *Server) CreateUser(ctx context.Context, req *userv1.CreateUserRequest) 
 	}, nil
 }
 
-func (s *Server) UpdateUser(ctx context.Context, req *userv1.UpdateUserRequest) (*userv1.CreateUserResponse, error) {
+func (s *Server) UpdateUser(ctx context.Context, req *userv1.UpdateUserRequest) (*userv1.UpdateUserResponse, error) {
 	const op = "app.Server.UpdateUser"
 
 	if req == nil || req.GetId() <= 0 {
@@ -107,13 +119,13 @@ func (s *Server) UpdateUser(ctx context.Context, req *userv1.UpdateUserRequest) 
 		return nil, status.Error(codes.InvalidArgument, "nothing to update")
 	}
 
-	usr, err := s.userService.UpdateUser(ctx, req.GetId(), req.GetEmail(), req.GetName())
+	usr, err := s.UserService.UpdateUser(ctx, req.GetId(), req.GetEmail(), req.GetName())
 	if err != nil {
 		s.logger.Warn("UpdateUser failed", slog.String("op", op), sl.Err(err))
 		return nil, errorsx.ToGRPC(err)
 	}
 
-	return &userv1.CreateUserResponse{
+	return &userv1.UpdateUserResponse{
 		User: &userv1.User{
 			Id:        usr.ID,
 			Email:     usr.Email,
@@ -131,7 +143,7 @@ func (s *Server) DeleteUser(ctx context.Context, req *userv1.DeleteUserRequest) 
 		return nil, status.Error(codes.InvalidArgument, "id must be > 0")
 	}
 
-	if err := s.userService.DeleteUser(ctx, req.GetId()); err != nil {
+	if err := s.UserService.DeleteUser(ctx, req.GetId()); err != nil {
 		s.logger.Warn("DeleteUser failed", slog.String("op", op))
 		return nil, errorsx.ToGRPC(err)
 	}
