@@ -11,13 +11,6 @@ import (
 	"github.com/Derbik-Git/user-service/internal/sl"
 )
 
-type UserService interface {
-	CreateUser(ctx context.Context, email, name string) (*domain.User, error)
-	GetUser(ctx context.Context, id int64) (*domain.User, error)
-	UpdateUser(ctx context.Context, u *domain.User) (*domain.User, error)
-	DeleteUser(ctx context.Context, id int64) error
-}
-
 type UserRepository interface {
 	GetUserByID(ctx context.Context, id int64) (*domain.User, error)
 	Create(ctx context.Context, email, name string) (*domain.User, error)
@@ -33,7 +26,6 @@ type Service struct {
 	ttl   time.Duration
 }
 
-// менять
 func NewUserService(repo UserRepository, cache cache.Cache, log *slog.Logger, ttl time.Duration) *Service {
 	if log == nil { //используем этот блок повторно, не смотря на наличие его в хендлере, так как сервис может использоваться без хендлера, например в тестах
 		log = slog.Default()

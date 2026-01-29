@@ -62,7 +62,7 @@ func (c *RedisCache) GetUser(ctx context.Context, id int64) (*domain.User, error
 	b, err := cmd.Bytes()
 	if err != nil {
 		if errors.Is(err, redis.Nil) { //redis.Nil - ключ существует, но значеник пустое
-			return nil, nil //дословно передаём, что всё ок, но значение по ключу пустое
+			return nil, nil //дословно, передаём что всё ок, но значение по ключу пустое
 		}
 		c.logger.Error("redis GET failed", slog.String("op:", op), slog.String("key:", key), sl.Err(err))
 		return nil, err

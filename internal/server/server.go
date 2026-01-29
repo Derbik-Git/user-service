@@ -18,7 +18,7 @@ import (
 type UserService interface {
 	GetUser(ctx context.Context, id int64) (*domain.User, error)
 	CreateUser(ctx context.Context, email, name string) (*domain.User, error)
-	UpdateUser(ctx context.Context, id int64, email, name string) (*domain.User, error)
+	UpdateUser(ctx context.Context, u *domain.User) (*domain.User, error)
 	DeleteUser(ctx context.Context, id int64) error
 }
 
@@ -109,22 +109,31 @@ func (s *Server) CreateUser(ctx context.Context, req *userv1.CreateUserRequest) 
 func (s *Server) UpdateUser(ctx context.Context, req *userv1.UpdateUserRequest) (*userv1.UpdateUserResponse, error) {
 	const op = "app.Server.UpdateUser"
 
+	// Проверка валидности запроса
 	if req == nil || req.GetId() <= 0 {
-		s.logger.Warn("invalid request", slog.String("op", op))
+		s.logger.Warn("invalid request: id must be > 0", slog.String("op", op))
 		return nil, status.Error(codes.InvalidArgument, "id must be > 0")
 	}
-
 	if req.GetEmail() == "" && req.GetName() == "" {
-		s.logger.Warn("invalid request", slog.String("op", op))
+		s.logger.Warn("invalid request: nothing to update", slog.String("op", op))
 		return nil, status.Error(codes.InvalidArgument, "nothing to update")
 	}
 
-	usr, err := s.UserService.UpdateUser(ctx, req.GetId(), req.GetEmail(), req.GetName())
+	// Формируем domain.User из данных запроса
+	usrDomain := &domain.User{
+		ID:    req.GetId(),
+		Email: req.GetEmail(),
+		Name:  req.GetName(),
+	}
+
+	// Вызываем сервис
+	usr, err := s.UserService.UpdateUser(ctx, usrDomain)
 	if err != nil {
 		s.logger.Warn("UpdateUser failed", slog.String("op", op), sl.Err(err))
 		return nil, errorsx.ToGRPC(err)
 	}
 
+	// Возвращаем ответ protobuf
 	return &userv1.UpdateUserResponse{
 		User: &userv1.User{
 			Id:        usr.ID,
