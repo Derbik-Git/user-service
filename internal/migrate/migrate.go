@@ -15,7 +15,7 @@ func MigrateUp(db *sql.DB, migrationsPath string) error {
 
 	cfg := &postgres.Config{}
 
-	driver, err := postgres.WithInstance(db, cfg) // драйер для соединения миграций с базой данных
+	driver, err := postgres.WithInstance(db, cfg) // драйвер для соединения миграций с базой данных
 	if err != nil {
 		return fmt.Errorf("%s: create drive failed: %w", op, err)
 	}

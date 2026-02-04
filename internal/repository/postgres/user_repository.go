@@ -19,7 +19,7 @@ type Storage struct {
 func NewStorage(dsn string) (*Storage, error) {
 	const op = "storage.postgres.NewStorage"
 
-	db, err := sql.Open("dsn", dsn)
+	db, err := sql.Open("postgres", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("%s: open failed: %w", op, err)
 	}
@@ -52,7 +52,7 @@ func (s *Storage) Create(ctx context.Context, email, name string) (*domain.User,
 	if err != nil {
 		//В INSERT / UPDATE мы проверяем PgError, потому что это ошибки бизнес-ограничений БД(например нарушение NOT NULL или нарушение уникальности). Обычно проверка типа: if errors.Is(err, sql.ErrNoRows) тут нету замысловатой логики в самом запросе и ошибка будет наипростейшая, пользователя просто нет, поэтому и такая простая обработка, нежели в сложных запросов, где могут произойти грубые ошибки, требующие более глубокой обработки как при INSERT / UPDATE
 		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" { // «Если ошибка, произошедшая при выполнении запроса, является ошибкой PostgreSQL и её SQLSTATE-код равен 23503 (нарушение внешнего ключа), то обработай её специальным образом»
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" { // «Если ошибка, произошедшая при выполнении запроса, является ошибкой PostgreSQL и её SQLSTATE-код равен 23505 (нарушение уникальности) то обработай её специальным образом»
 			return nil, fmt.Errorf("%s: %w", op, storage.ErrUserExists)
 		}
 
@@ -66,7 +66,7 @@ func (s *Storage) GetUserByID(ctx context.Context, id int64) (*domain.User, erro
 	const op = "storage.postgres.GetUserByID"
 
 	query := `
-	SELECT id, email, name, creatted_at
+	SELECT id, email, name, created_at
 	FROM users
 	WHERE id = $1
 	`
@@ -77,8 +77,10 @@ func (s *Storage) GetUserByID(ctx context.Context, id int64) (*domain.User, erro
 	err := s.db.QueryRowContext(ctx, query, id).Scan(&u.ID, &u.Email, &u.Name, &u.CreatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) { // Это не PgError потому что бд не считает это ошибкой (не ошибка PostgreSQL)
-			return nil, fmt.Errorf("%s: %w", op, err)
+			return nil, nil // нету пользователя ≠ ошибка, поэтому nil, nil (ни пользователя, ни ошибки)
 		}
+
+		return nil, fmt.Errorf("%s: %w", op, err)
 	}
 
 	return &u, nil
@@ -98,8 +100,8 @@ func (s *Storage) Update(ctx context.Context, user *domain.User) (*domain.User, 
 
 	err := s.db.QueryRowContext(ctx, query, user.Email, user.Name, user.ID).Scan(&update.ID, &update.Email, &update.Name, &update.CreatedAt) // Входные данные ≠ результат операции (ЭТО ВАЖНО, это я говорю к тому что если мы начали бы передавать в Scan входящие значения функции как в прошлых методах репозитория, Postgres начал бы добавлять результат sql запроса в не пустые поля структуры, а с какими то значениями, так как для метода Update передавалась заполненнная структура, а для корректного заполнения нам нужна пустая структура, что бы структура не заполнилась некорректными данными входящие параметры для запуска SQL запроса + его результат, это не корректно!!!! И выведет не тот результат SQL запроса, которйм мы ожидали получить, а будут некорректные данные и путаница!!!! Поэтому нужно создавать пустую структуру для записис SQL результата)
 	if err != nil {
-		var PgErr *pgconn.PgError
-		if errors.As(err, &PgErr) && PgErr.Code == "235050" {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			return nil, fmt.Errorf("%s: %w", op, storage.ErrUserExists) // Пользователь уже существует
 		}
 

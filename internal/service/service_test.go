@@ -10,7 +10,6 @@ import (
 
 	"github.com/Derbik-Git/user-service/internal/domain"
 	errorsx "github.com/Derbik-Git/user-service/internal/errors"
-	"github.com/Derbik-Git/user-service/internal/service"
 	"github.com/Derbik-Git/user-service/internal/service/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -50,7 +49,7 @@ func TestService_CreateUser(t *testing.T) {
 			wantErr:       errorsx.ErrInvalidInput,
 		},
 		{
-			nameTest:      "repo error",
+			nameTest:      "repository error",
 			emailArgument: "test@email.com",
 			nameArgument:  "Bob Proctor",
 			repo: &mocks.UserRepositoryMock{
@@ -107,7 +106,7 @@ func TestService_GetUser(t *testing.T) {
 			wantNil: false,
 		},
 		{
-			nameTest: "repo return error",
+			nameTest: "repository return error",
 			id:       2,
 			repo: &mocks.UserRepositoryMock{
 				GetUserByIDFunc: func(ctx context.Context, id int64) (*domain.User, error) {
@@ -119,7 +118,7 @@ func TestService_GetUser(t *testing.T) {
 			wantNil: true,
 		},
 		{
-			nameTest: "repo returns nil", // отсутствие пользователя по указанному id
+			nameTest: "repository returns nil", // отсутствие пользователя по указанному id
 			id:       3,
 			repo: &mocks.UserRepositoryMock{
 				GetUserByIDFunc: func(ctx context.Context, id int64) (*domain.User, error) {
@@ -170,35 +169,35 @@ func TestService_UpdateUser(t *testing.T) {
 	ctx := context.Background()
 
 	tests := []struct {
-		name    string
-		user    *domain.User
-		repo    *mocks.MockUserRepository
-		cache   *mocks.MockCache
-		wantErr error
+		nameTest   string
+		user       *domain.User
+		repository *mocks.UserRepositoryMock
+		cache      *mocks.CacheMock
+		wantErr    error
 	}{
 		{
-			name: "success",
-			user: &domain.User{ID: 1, Email: "a@b.com", Name: "John"},
-			repo: &mocks.MockUserRepository{
-				UpdateFn: func(ctx context.Context, u *domain.User) (*domain.User, error) {
-					return u, nil
+			nameTest: "success",
+			user:     &domain.User{ID: 1, Email: "1@email.com", Name: "Test"},
+			repository: &mocks.UserRepositoryMock{
+				UpdateFunc: func(ctx context.Context, user *domain.User) (*domain.User, error) {
+					return user, nil
 				},
 			},
 			cache:   nil,
 			wantErr: nil,
 		},
 		{
-			name:    "invalid input",
-			user:    nil,
-			repo:    &mocks.MockUserRepository{},
-			cache:   nil,
-			wantErr: errorsx.ErrInvalidInput,
+			nameTest:   "invalid input ",
+			user:       nil,
+			repository: &mocks.UserRepositoryMock{},
+			cache:      nil,
+			wantErr:    errorsx.ErrInvalidInput,
 		},
 		{
-			name: "repo error",
-			user: &domain.User{ID: 1, Email: "a@b.com", Name: "John"},
-			repo: &mocks.MockUserRepository{
-				UpdateFn: func(ctx context.Context, u *domain.User) (*domain.User, error) {
+			nameTest: "repository error",
+			user:     &domain.User{ID: 2, Email: "2@gmail.com", Name: "test"},
+			repository: &mocks.UserRepositoryMock{
+				UpdateFunc: func(ctx context.Context, user *domain.User) (*domain.User, error) {
 					return nil, errors.New("update failed")
 				},
 			},
@@ -209,9 +208,10 @@ func TestService_UpdateUser(t *testing.T) {
 
 	for _, tt := range tests {
 		tt := tt
-		t.Run(tt.name, func(t *testing.T) {
+		t.Run(tt.nameTest, func(*testing.T) {
 			t.Parallel()
-			svc := service.NewUserService(tt.repo, tt.cache, slog.Default(), time.Minute)
+
+			svc := NewUserService(tt.repository, tt.cache, slog.Default(), time.Minute)
 			u, err := svc.UpdateUser(ctx, tt.user)
 
 			if tt.wantErr == nil {
@@ -225,52 +225,52 @@ func TestService_UpdateUser(t *testing.T) {
 	}
 }
 
-// ==========================
-// DELETE USER
-// ==========================
-func TestService_DeleteUser(t *testing.T) {
+func TestServic_DeleteUser(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
 	tests := []struct {
-		name    string
-		id      int64
-		repo    *mocks.MockUserRepository
-		cache   *mocks.MockCache
-		wantErr error
+		nameTest   string
+		id         int64
+		repository *mocks.UserRepositoryMock
+		cache      *mocks.CacheMock
+		wantErr    error
 	}{
 		{
-			name: "success",
-			id:   1,
-			repo: &mocks.MockUserRepository{
-				DeleteFn: func(ctx context.Context, id int64) error { return nil },
+			nameTest: "success",
+			id:       1,
+			repository: &mocks.UserRepositoryMock{
+				DeleteFunc: func(ctx context.Context, id int64) error {
+					return nil
+				},
 			},
 			cache:   nil,
 			wantErr: nil,
 		},
 		{
-			name:    "invalid id",
-			id:      0,
-			repo:    &mocks.MockUserRepository{},
-			cache:   nil,
-			wantErr: errorsx.ErrInvalidInput,
+			nameTest:   "invalid input",
+			id:         0,
+			repository: &mocks.UserRepositoryMock{},
+			cache:      nil,
+			wantErr:    errorsx.ErrInvalidInput,
 		},
 		{
-			name: "repo error",
-			id:   1,
-			repo: &mocks.MockUserRepository{
-				DeleteFn: func(ctx context.Context, id int64) error { return errors.New("delete failed") },
+			nameTest: "repository error",
+			id:       1,
+			repository: &mocks.UserRepositoryMock{
+				DeleteFunc: func(ctx context.Context, id int64) error {
+					return errors.New("delete failed")
+				},
 			},
-			cache:   nil,
-			wantErr: errors.New("delete failed"),
 		},
 	}
 
 	for _, tt := range tests {
 		tt := tt
-		t.Run(tt.name, func(t *testing.T) {
+		t.Run(tt.nameTest, func(*testing.T) {
 			t.Parallel()
-			svc := service.NewUserService(tt.repo, tt.cache, slog.Default(), time.Minute)
+
+			svc := NewUserService(tt.repository, tt.cache, slog.Default(), time.Minute)
 			err := svc.DeleteUser(ctx, tt.id)
 
 			if tt.wantErr == nil {

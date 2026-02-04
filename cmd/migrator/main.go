@@ -25,7 +25,7 @@ func main() {
 	flag.Parse()
 
 	if dsn == "" {
-		log.Fatal("dsn is required, example: -dsn postgres://user:pass@localhost:5432/users?sslmode=disable")
+		log.Fatal("dsn is required, example: -dsn postgres://user:pass@localhost:5433/users?sslmode=disable")
 	}
 
 	// Важно: драйвер "pgx" регистрируется импортом _ "github.com/jackc/pgx/v5/stdlib"
