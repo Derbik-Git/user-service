@@ -4,6 +4,7 @@ go 1.24.4
 
 require (
 	github.com/Derbik-Git/protos-tren-redis v0.0.1
+	github.com/brianvoe/gofakeit/v6 v6.28.0
 	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/jackc/pgconn v1.14.3
 	github.com/jackc/pgx/v5 v5.8.0

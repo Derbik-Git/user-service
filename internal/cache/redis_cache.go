@@ -14,7 +14,7 @@ import (
 )
 
 type RedisCache struct {
-	client *redis.ClusterClient
+	client redis.Cmdable // теперь поддерживает и single, и cluster redis
 	ttl    time.Duration
 	logger *slog.Logger
 }
@@ -23,22 +23,46 @@ func NewRedisCache(addrs []string, ttl time.Duration, opts *redis.ClusterOptions
 	const op = "cache.redis.NewRedisCache"
 
 	if len(addrs) == 0 { // адреса, берутся из конфига
-		logger.Error("no redis address provided", slog.String("op:", op))
-		return nil, errors.New("no redis addres provided")
+		logger.Error("no redis address provided", slog.String("op", op))
+		return nil, errors.New("no redis address provided")
 	}
 
-	if opts == nil { //поверка дали ли мы кастомные опции, если нет, передаём структуру с опциями поумолчанию(позже заполняем(в этом методе))
-		opts = &redis.ClusterOptions{} //— это не “создание дефолтного кластера”. Это просто создание структуры опций с нулевыми (дефолтными) полями библиотеки. Эти поля библиотеки уже содержат разумные значения по умолчанию (если библиотека их использует). Мы потом обязательно заполним opts.Addrs.
+	var client redis.Cmdable
+
+	// если 1 адрес — используем обычный клиент
+	if len(addrs) == 1 {
+		client = redis.NewClient(&redis.Options{
+			Addr: addrs[0],
+		})
+	} else {
+		// если несколько адресов — кластер
+
+		if opts == nil {
+			// поверка дали ли мы кастомные опции, если нет, передаём структуру с опциями по умолчанию
+			// (позже заполняем(в этом методе))
+			opts = &redis.ClusterOptions{}
+			// — это не “создание дефолтного кластера”. Это просто создание структуры опций
+			// с нулевыми (дефолтными) полями библиотеки.
+			// Эти поля библиотеки уже содержат разумные значения по умолчанию.
+			// Мы потом обязательно заполним opts.Addrs.
+		}
+
+		opts.Addrs = addrs // помещаем адреса в структуру, тем самым говорим,
+		// что мы хотим использовать эти адреса для подключения к редису
+
+		client = redis.NewClusterClient(opts)
 	}
 
-	opts.Addrs = addrs //помещаем адреса в структуру, тем самым говорим, что мы хотим использовать эти адреса для подключения к редису
-
-	client := redis.NewClusterClient(opts)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second) //в данном случае контекст создан для того, что бы отсановить Ping в случае долгого подключения, потому что если подключение идёт дольше чем 5 секунд, значит чтото нетак и нам надо отключатся
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// в данном случае контекст создан для того, что бы остановить Ping
+	// в случае долгого подключения, потому что если подключение идёт
+	// дольше чем 5 секунд, значит что то не так и нам надо отключаться
 	defer cancel()
-	if err := client.Ping(ctx).Err(); err != nil { //Ping - проверяет связь с редисом, команда отправляет в редис PING он должен ответить PONG, если нет, значит что то помешало соединению, например кластер не отвечает | .Err() - используется что бы вернуть ошибку
-		logger.Error("redis PING failed", slog.String("op:", op), sl.Err(err))
+
+	if err := client.Ping(ctx).Err(); err != nil {
+		// Ping - проверяет связь с редисом, команда отправляет в редис PING
+		// он должен ответить PONG, если нет, значит что то помешало соединению
+		logger.Error("redis PING failed", slog.String("op", op), slog.Any("err", err))
 		return nil, err
 	}
 
@@ -58,7 +82,7 @@ func (c *RedisCache) GetUser(ctx context.Context, id int64) (*domain.User, error
 
 	key := userKey(id)
 
-	cmd := c.client.Get(ctx, key)
+	cmd := c.client.Get(ctx, key) // в данном случе key - это ключь в самом redis, при вызове метода GetUser в тех же самых тестах передавая id сгенерированного пользователя, оно сначала за счёт userKey конвертируется в строку, потому что в redis ключи - это строки, потом попадает в метод Get (в качестве ключа для redis), который напрямую взаимодействует с redis-ом,
 	b, err := cmd.Bytes()
 	if err != nil {
 		if errors.Is(err, redis.Nil) { //redis.Nil - ключ существует, но значеник пустое
@@ -113,9 +137,21 @@ func (c *RedisCache) DeleteUser(ctx context.Context, id int64) error {
 func (c *RedisCache) Close() error {
 	const op = "cache.redis.Close"
 
-	if err := c.client.Close(); err != nil {
-		c.logger.Error("redis client close failed", slog.String("op:", op), sl.Err(err))
+	var err error
+
+	switch client := c.client.(type) {
+	case *redis.Client:
+		err = client.Close()
+	case *redis.ClusterClient:
+		err = client.Close()
+	default:
+		return nil
+	}
+
+	if err != nil {
+		c.logger.Error("redis client close failed", slog.String("op", op), slog.Any("err", err))
 		return err
 	}
+
 	return nil
 }
