@@ -16,6 +16,10 @@ type Storage struct {
 	db *sql.DB
 }
 
+func (s *Storage) DB() *sql.DB { // этот метод нужен исключительно для тестов, что бы мы возвращали соединение с db и могли его использовать для запуска миграций
+	return s.db
+}
+
 func NewStorage(dsn string) (*Storage, error) {
 	const op = "storage.postgres.NewStorage"
 

@@ -19,6 +19,10 @@ type RedisCache struct {
 	logger *slog.Logger
 }
 
+func (r *RedisCache) Client() redis.Cmdable { // используется только в it тестах, для того что бы чистить редис после каждого теста
+	return r.client
+}
+
 func NewRedisCache(addrs []string, ttl time.Duration, opts *redis.ClusterOptions, logger *slog.Logger) (*RedisCache, error) {
 	const op = "cache.redis.NewRedisCache"
 
