@@ -58,6 +58,8 @@ func NewRedisCache(addrs []string, ttl time.Duration, opts *redis.ClusterOptions
 		client = redis.NewClusterClient(opts)
 	}
 
+	// !!!!!!!! Всё нужно прочитать потому что иначе программа просто бы завершилась
+	/* Я ЗАКОМЕНТИРОВАЛ PING, Т.К. ЭТО МЕШАЕТ ЗАПУСКУ FALLBACK ТЕСТАМ REDIS, ПОТОМУ ЧТО ТАМ МЫ ДОЛЖНФ ПОПЫТАТЬСЯ ОТКРЫТЬ НЕ СУЩЕСТВУЮЩУЮ БД, ЧТО БЫ ТАК СКАЗАТЬ ВЫПОЛНИТЬ FALLBACK ТЕСТ БЕЗ REDIS, А ТАК У НАС ПРОГРАММА ПРОПИНГУЕТ СОЕДИНЕНИЕ И ВСЁ НА ЭТОМ ЗАКОНЧИТСЯ, ПОЭТОМУ ПИНГАВАТЬ МЫ БУДЕИ В MAIN.GO, А СОЕДИНЕНИЕ ПРОЙДЁТ НОРМАЛЬНО, ПРОСТО ПРИ ПЕРВОЙ ПОПЫТКЕ КЛАССИЧЕСКОГО ЗАПРОСА, В РЕДИС ПРОГРАММА ВЫДАСТ ОШИБКУ
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	// в данном случае контекст создан для того, что бы остановить Ping
 	// в случае долгого подключения, потому что если подключение идёт
@@ -70,6 +72,7 @@ func NewRedisCache(addrs []string, ttl time.Duration, opts *redis.ClusterOptions
 		logger.Error("redis PING failed", slog.String("op", op), slog.Any("err", err))
 		return nil, err
 	}
+	*/
 
 	return &RedisCache{
 		client: client,
