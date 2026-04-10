@@ -18,24 +18,30 @@ type UserRepository interface {
 	Delete(ctx context.Context, id int64) error
 }
 
-// менять
-type Service struct {
-	repo  UserRepository
-	cache cache.Cache
-	log   *slog.Logger
-	ttl   time.Duration
+type EventProducer interface {
+	PublishUserEvent(ctx context.Context, event *domain.UserEvent) error
 }
 
-func NewUserService(repo UserRepository, cache cache.Cache, log *slog.Logger, ttl time.Duration) *Service {
+// менять
+type Service struct {
+	repo   UserRepository
+	cache  cache.Cache
+	broker EventProducer
+	log    *slog.Logger
+	ttl    time.Duration
+}
+
+func NewUserService(repo UserRepository, cache cache.Cache, broker EventProducer, log *slog.Logger, ttl time.Duration) *Service {
 	if log == nil { //используем этот блок повторно, не смотря на наличие его в хендлере, так как сервис может использоваться без хендлера, например в тестах
 		log = slog.Default()
 	}
 
 	return &Service{
-		repo:  repo,
-		cache: cache,
-		log:   log,
-		ttl:   ttl,
+		repo:   repo,
+		cache:  cache,
+		broker: broker,
+		log:    log,
+		ttl:    ttl,
 	}
 }
 

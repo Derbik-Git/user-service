@@ -19,7 +19,7 @@ type RedisCache struct {
 	logger *slog.Logger
 }
 
-// используется только в it тестах, для того что бы чистить редис после каждого теста
+// используется только в тестах типа: integartion
 func (r *RedisCache) Client() redis.Cmdable { // благодаря этому методы мы возвращаем этот интерфейс redis.Cmdable, с помощью которого мы можем дёргать методы кеша, такие как GET, SET, DEL, TTL, FLUSHDB. Это redis client wrapper, который: использует connection pool, управляет reconnect
 	return r.client
 }
