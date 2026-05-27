@@ -29,7 +29,7 @@ type Server struct {
 }
 
 // нужно зарегстрировать grpc сервер, его нужно собрать в app.go
-func RegisteGRPCrServer(gRPC *grpc.Server, userService UserService, logger *slog.Logger) {
+func RegisterGRPCServer(gRPC *grpc.Server, userService UserService, logger *slog.Logger) {
 	if logger == nil {
 		logger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	}

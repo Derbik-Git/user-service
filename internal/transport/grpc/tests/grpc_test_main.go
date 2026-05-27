@@ -42,7 +42,7 @@ func TestMain(m *testing.M) {
 
 	newServer := grpc.NewServer()
 
-	server.RegisteGRPCrServer(newServer, service, logger) // логика регистрируется на этом сервере. Теперь сервер знает, как обрабатывать запросы к сервису пользователя.
+	server.RegisterGRPCServer(newServer, service, logger) // логика регистрируется на этом сервере. Теперь сервер знает, как обрабатывать запросы к сервису пользователя.
 	// _
 
 	// создаём слушатель

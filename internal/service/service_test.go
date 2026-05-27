@@ -21,12 +21,15 @@ func TestService_CreateUser(t *testing.T) {
 
 	ctx := context.Background() // создаём контекст, просто потому что этого требует логика сервиса
 
+	var capturedEvent *domain.UserEvent // !!! эта перменная нужня для проверки правильные ли данные сервис пытался отправить в брокер kafka
+
 	tests := []struct {
 		nameTest      string
 		emailArgument string
 		nameArgument  string
 		repo          *mocks.UserRepositoryMock
 		cache         *mocks.CacheMock
+		broker        *mocks.EventProducerMock
 		wantErr       error // ожидание что вернёт тест, тут идёт сверка, то ли врнул тест или нет(аргумент, который мы ожидаем)
 	}{
 		{
@@ -38,7 +41,14 @@ func TestService_CreateUser(t *testing.T) {
 					return &domain.User{ID: 1, Email: email, Name: name}, nil // мы лишь описываем что должно вернутся в случае если сервис вызовет CreateFunc, то есть если при запуске теста именно сервис вызовет CreateFunc в моке, так как настоящий репозиторий ничего не может вернуть, так как это Unit тесты и у нас стоит мок, мы говорим что при вызове такой то функции из мока &mocks.UserRepositoryMock{CreateFunc: func(ctx context.Context, email, name string) (*domain.User, error), хотим увидеть вот такой результат return &domain.User{ID: 1, Email: email, Name: name}, nil
 				},
 			},
-			cache:   nil,
+			cache: nil,
+			broker: &mocks.EventProducerMock{
+				PublishUserEventFunc: func(ctx context.Context, event *domain.UserEvent) error {
+					// перехватываем событие в структуру, что бы потом проверить правильное ли сообщение хотел отправить сервис в брокер kafka
+					capturedEvent = event
+					return nil // символезируем об успешном выполнении без ошибок
+				},
+			},
 			wantErr: nil,
 		},
 		{
@@ -46,6 +56,7 @@ func TestService_CreateUser(t *testing.T) {
 			emailArgument: "",
 			nameArgument:  "",
 			repo:          &mocks.UserRepositoryMock{}, // тут программа даже не доходит типо до репозитория, она падает уже в сервисе, потому что ввод не верный, эта логика указана в сервисе, тио если email == "" || name == "", то возвращаем и errorsx.ErrInvalidArgument, поэтому и тут всё так, ожидаем именно эту ошибку и не вызываем как бы вот такой метод мока CreateFunc: func(ctx context.Context, email, name string) (*domain.User, error) как в сосседних тестах, потому что программа даже до него не доходит, а падает на проверке if == "" уже в сервисе не доходя до репозитория
+			broker:        &mocks.EventProducerMock{},
 			wantErr:       errorsx.ErrInvalidInput,
 		},
 		{
@@ -57,7 +68,8 @@ func TestService_CreateUser(t *testing.T) {
 					return nil, errors.New("db error") // а тут мы ожидаем ошибку именно от репозитория, поэтому и вызываем мок метод репозитория(ну то есть говорим что хотим от него получить)
 				},
 			},
-			// cache: nil,
+			cache:   nil,
+			broker:  &mocks.EventProducerMock{},
 			wantErr: errors.New("db error"),
 		},
 	}
@@ -65,13 +77,20 @@ func TestService_CreateUser(t *testing.T) {
 	for _, tt := range tests {
 		tt := tt                              // дословно мы туту говорим Скопируй содержимое листа tt и положи его на новый отдельный лист, который будет жить только в этой итерации, это нужно для того что бы у каждой горутины/теста был свой собственный лист, как я понял, в кратце мы создаём дял каждого теста свою копию, что бы тесты не трогали один и тот же лист, без этого все тетсы читали бы последний тест кейс, а с этой конструкцией, каждй тест читает свой тест кейс
 		t.Run(tt.nameTest, func(*testing.T) { // говорим чтот запускаем тесты с таким именем tt.nameTest
-			t.Parallel()                                                          // объявляем что тесты могут выполнятся параллельно
-			svc := NewUserService(tt.repo, tt.cache, slog.Default(), time.Minute) // даём сервису данные в конструктор для вызова/теста определённого метода
-			u, err := svc.CreateUser(ctx, tt.emailArgument, tt.nameArgument)      // вызываем сам метод
+
+			capturedEvent = nil // обнуляем перменную, что бы данные от одного теста не перетикали в другой тест
+
+			svc := NewUserService(tt.repo, tt.cache, tt.broker, slog.Default(), time.Minute) // даём сервису данные в конструктор для вызова/теста определённого метода
+			u, err := svc.CreateUser(ctx, tt.emailArgument, tt.nameArgument)                 // вызываем сам метод
 
 			if tt.wantErr == nil {
 				require.NoError(t, err)
 				assert.NotNil(t, u)
+
+				// !!! ДОБАВЛЯЕМ ПРОВЕРКУ KAFKA !!!
+				require.NotNil(t, capturedEvent, "ожидалось, что сервис отправит событие в Kafka, но он этого не сделал")
+				assert.Equal(t, domain.UserCreated, capturedEvent.Type)
+				assert.Equal(t, tt.emailArgument, capturedEvent.Payload.Email)
 			} else {
 				require.Error(t, err)
 				assert.Equal(t, tt.wantErr.Error(), err.Error())
@@ -90,6 +109,7 @@ func TestService_GetUser(t *testing.T) {
 		id       int64
 		repo     *mocks.UserRepositoryMock
 		cache    *mocks.CacheMock
+		broker   *mocks.EventProducerMock
 		wantErr  error
 		wantNil  bool // нужно для того что бы, отличать случаи, когда мы ожидаем пользователь не найден, то есть когда мы ожидаем return nil, nil, wantNil = true, так же он всегда будет true, в любых тестах, где мы ожидаем ошибку, где мы ожидаем результат, то есть пользователь есть, wantNil всегда будет = false
 	}{
@@ -114,6 +134,7 @@ func TestService_GetUser(t *testing.T) {
 				},
 			},
 			cache:   &mocks.CacheMock{},
+			broker:  &mocks.EventProducerMock{},
 			wantErr: errors.New("db error"),
 			wantNil: true,
 		},
@@ -126,6 +147,7 @@ func TestService_GetUser(t *testing.T) {
 				},
 			},
 			cache:   &mocks.CacheMock{},
+			broker:  &mocks.EventProducerMock{},
 			wantErr: nil,
 			wantNil: true,
 		},
@@ -134,9 +156,9 @@ func TestService_GetUser(t *testing.T) {
 			id:       0,
 			repo:     &mocks.UserRepositoryMock{},
 			cache:    &mocks.CacheMock{},
-
-			wantErr: errorsx.ErrInvalidInput,
-			wantNil: true,
+			broker:   &mocks.EventProducerMock{},
+			wantErr:  errorsx.ErrInvalidInput,
+			wantNil:  true,
 		},
 	}
 
@@ -144,7 +166,7 @@ func TestService_GetUser(t *testing.T) {
 		tt := tt
 		t.Run(tt.nameTest, func(*testing.T) {
 			t.Parallel()
-			svc := NewUserService(tt.repo, tt.cache, slog.Default(), time.Minute)
+			svc := NewUserService(tt.repo, tt.cache, tt.broker, slog.Default(), time.Minute)
 			u, err := svc.GetUser(ctx, tt.id)
 
 			if tt.wantErr == nil { //если в этом тесте мы не ждём ошибку
@@ -168,11 +190,14 @@ func TestService_UpdateUser(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
+	var capturedEvent *domain.UserEvent
+
 	tests := []struct {
 		nameTest   string
 		user       *domain.User
 		repository *mocks.UserRepositoryMock
 		cache      *mocks.CacheMock
+		broker     *mocks.EventProducerMock
 		wantErr    error
 	}{
 		{
@@ -183,7 +208,13 @@ func TestService_UpdateUser(t *testing.T) {
 					return user, nil
 				},
 			},
-			cache:   nil,
+			cache: nil,
+			broker: &mocks.EventProducerMock{
+				PublishUserEventFunc: func(ctx context.Context, event *domain.UserEvent) error {
+					capturedEvent = event
+					return nil
+				},
+			},
 			wantErr: nil,
 		},
 		{
@@ -191,6 +222,7 @@ func TestService_UpdateUser(t *testing.T) {
 			user:       nil,
 			repository: &mocks.UserRepositoryMock{},
 			cache:      nil,
+			broker:     &mocks.EventProducerMock{},
 			wantErr:    errorsx.ErrInvalidInput,
 		},
 		{
@@ -202,6 +234,7 @@ func TestService_UpdateUser(t *testing.T) {
 				},
 			},
 			cache:   nil,
+			broker:  &mocks.EventProducerMock{},
 			wantErr: errors.New("update failed"),
 		},
 	}
@@ -209,14 +242,19 @@ func TestService_UpdateUser(t *testing.T) {
 	for _, tt := range tests {
 		tt := tt
 		t.Run(tt.nameTest, func(*testing.T) {
-			t.Parallel()
 
-			svc := NewUserService(tt.repository, tt.cache, slog.Default(), time.Minute)
+			capturedEvent = nil
+
+			svc := NewUserService(tt.repository, tt.cache, tt.broker, slog.Default(), time.Minute)
 			u, err := svc.UpdateUser(ctx, tt.user)
 
 			if tt.wantErr == nil {
 				require.NoError(t, err)
 				assert.NotNil(t, u)
+
+				require.NotNil(t, capturedEvent, "ожидалось, что сервис отправит событие в Kafka, но он этого не сделал")
+				assert.Equal(t, domain.UserUpdated, capturedEvent.Type)
+				assert.Equal(t, tt.user.Email, capturedEvent.Payload.Email)
 			} else {
 				require.Error(t, err)
 				assert.Equal(t, tt.wantErr.Error(), err.Error())
@@ -229,11 +267,14 @@ func TestServic_DeleteUser(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
+	var capturedEvent *domain.UserEvent
+
 	tests := []struct {
 		nameTest   string
 		id         int64
 		repository *mocks.UserRepositoryMock
 		cache      *mocks.CacheMock
+		broker     *mocks.EventProducerMock
 		wantErr    error
 	}{
 		{
@@ -244,14 +285,20 @@ func TestServic_DeleteUser(t *testing.T) {
 					return nil
 				},
 			},
-			cache:   nil,
-			wantErr: nil,
+			cache: nil,
+			broker: &mocks.EventProducerMock{
+				PublishUserEventFunc: func(ctx context.Context, event *domain.UserEvent) error {
+					capturedEvent = event
+					return nil
+				},
+			}, wantErr: nil,
 		},
 		{
 			nameTest:   "invalid input",
 			id:         0,
 			repository: &mocks.UserRepositoryMock{},
 			cache:      nil,
+			broker:     &mocks.EventProducerMock{},
 			wantErr:    errorsx.ErrInvalidInput,
 		},
 		{
@@ -262,19 +309,26 @@ func TestServic_DeleteUser(t *testing.T) {
 					return errors.New("delete failed")
 				},
 			},
+			broker:  &mocks.EventProducerMock{},
+			wantErr: errors.New("delete failed"),
 		},
 	}
 
 	for _, tt := range tests {
 		tt := tt
 		t.Run(tt.nameTest, func(*testing.T) {
-			t.Parallel()
+			// без парралельности, иначе(с парралельностью) у нас например success тест будет заполнять capturedEvent, в ту же миллисекунду invalid input будет обнулять capturedIvent и произойдёт гонка данных
+			capturedEvent = nil // сначала обнуляется, потом ниже выполняется метод, поэтому мы будем проверять уже заполненную, а не пустую переменнуую
 
-			svc := NewUserService(tt.repository, tt.cache, slog.Default(), time.Minute)
+			svc := NewUserService(tt.repository, tt.cache, tt.broker, slog.Default(), time.Minute)
 			err := svc.DeleteUser(ctx, tt.id)
 
 			if tt.wantErr == nil {
 				require.NoError(t, err)
+
+				require.NotNil(t, capturedEvent, "ожидалось, что сервис отправит событие в Kafka, но он этого не сделал")
+				assert.Equal(t, domain.UserDeleted, capturedEvent.Type)
+				assert.Equal(t, tt.id, capturedEvent.Payload.ID)
 			} else {
 				require.Error(t, err)
 				assert.Equal(t, tt.wantErr.Error(), err.Error())

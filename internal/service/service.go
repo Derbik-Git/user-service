@@ -9,6 +9,7 @@ import (
 	"github.com/Derbik-Git/user-service/internal/domain"
 	errorsx "github.com/Derbik-Git/user-service/internal/errors"
 	"github.com/Derbik-Git/user-service/internal/sl"
+	"github.com/google/uuid"
 )
 
 type UserRepository interface {
@@ -58,6 +59,22 @@ func (s *Service) CreateUser(ctx context.Context, email, name string) (*domain.U
 	if err != nil {
 		s.log.Error(op, sl.Err(err))
 		return nil, err
+	}
+
+	event := &domain.UserEvent{
+		ID:        uuid.New().String(),
+		Type:      domain.UserCreated,
+		Payload:   *u,
+		CreatedAt: time.Now(),
+	}
+
+	if s.broker != nil {
+		err = s.broker.PublishUserEvent(ctx, event)
+		if err != nil {
+			s.log.Error(op, slog.String("msg", "failed to publish to kafka"), sl.Err(err))
+		} else {
+			s.log.Info(op, slog.String("msg", "kafka event published"), slog.String("ivent_id", event.ID))
+		}
 	}
 
 	return u, nil
@@ -126,6 +143,22 @@ func (s *Service) UpdateUser(ctx context.Context, u *domain.User) (*domain.User,
 		}
 	}
 
+	event := &domain.UserEvent{
+		ID:        uuid.New().String(),
+		Type:      domain.UserUpdated,
+		Payload:   *updated,
+		CreatedAt: time.Now(),
+	}
+
+	if s.broker != nil {
+		err := s.broker.PublishUserEvent(ctx, event)
+		if err != nil {
+			s.log.Error(op, slog.String("msg", "failed publish to kafka"), sl.Err(err))
+		} else {
+			s.log.Info(op, slog.String("msg", "event publish"), slog.String("event_id", event.ID))
+		}
+	}
+
 	return updated, nil
 }
 
@@ -147,6 +180,24 @@ func (s *Service) DeleteUser(ctx context.Context, id int64) error {
 		if err := s.cache.DeleteUser(ctx, id); err != nil {
 			s.log.Warn(op, sl.Err(err))
 			return err
+		}
+	}
+
+	event := &domain.UserEvent{
+		ID:   uuid.New().String(),
+		Type: domain.UserDeleted,
+		Payload: domain.User{
+			ID: id,
+		},
+		CreatedAt: time.Now(),
+	}
+
+	if s.broker != nil {
+		err := s.broker.PublishUserEvent(ctx, event)
+		if err != nil {
+			s.log.Error(op, slog.String("msg", "failed to publish to kafka"), sl.Err(err))
+		} else {
+			s.log.Info(op, slog.String("msg", "event published"), slog.String("event_id", event.ID))
 		}
 	}
 
