@@ -4,10 +4,12 @@ import (
 	"errors"
 	"log"
 	"log/slog"
+	"net"
 	"os"
 	"testing"
 	"time"
 
+	"github.com/Derbik-Git/user-service/internal/broker/kafka"
 	"github.com/Derbik-Git/user-service/internal/cache"
 	"github.com/Derbik-Git/user-service/internal/migrate"
 	"github.com/Derbik-Git/user-service/internal/repository/postgres"
@@ -15,14 +17,17 @@ import (
 )
 
 const (
-	testPostgresDSNEnv = "SERVICE_TEST_POSTGRES_DSN"
-	testRedisAddrEnv   = "SERVICE_TESTREDIS_ADDR"
+	testPostgresDSNEnv  = "SERVICE_TEST_POSTGRES_DSN"
+	testRedisAddrEnv    = "SERVICE_TESTREDIS_ADDR"
+	testKafkaBrokersEnv = "SERVICE_TEST_KAFKA_BROKERS"
 )
 
 type TestEnv struct {
-	Repo  *postgres.Storage
-	Cache *cache.RedisCache
-	Svc   *service.Service
+	Repo          *postgres.Storage
+	Cache         *cache.RedisCache
+	KafkaProducer *kafka.Producer
+	KafkaConsumer *kafka.Consumer
+	Svc           *service.Service
 }
 
 var env *TestEnv
@@ -42,6 +47,20 @@ func waitForPostgres(dsn string) (*postgres.Storage, error) { // возвращ�
 
 }
 
+func waitForKafka(brokers []string) error {
+	for i := 0; i <= 15; i++ {
+		for _, broker := range brokers {
+			conn, err := net.DialTimeout("tcp", broker, time.Second)
+			if err == nil {
+				conn.Close()
+				return nil
+			}
+		}
+		time.Sleep(time.Second)
+	}
+	return errors.New("kafka not ready after retries")
+}
+
 func TestMain(m *testing.M) {
 	dsn := os.Getenv(testPostgresDSNEnv)
 	if dsn == "" {
@@ -51,6 +70,17 @@ func TestMain(m *testing.M) {
 	redisAddr := os.Getenv(testRedisAddrEnv)
 	if redisAddr == "" {
 		log.Fatalf("%s not set", testRedisAddrEnv)
+	}
+
+	testKafkaBrokers := os.Getenv(testKafkaBrokersEnv)
+	testBrokers := []string{}
+	if testKafkaBrokers != "" {
+		testBrokers = []string{testKafkaBrokers}
+	}
+
+	if err := waitForKafka(testBrokers); err != nil {
+		log.Fatal(err)
+
 	}
 
 	repo, err := waitForPostgres(dsn)
@@ -69,10 +99,16 @@ func TestMain(m *testing.M) {
 		log.Fatal(err)
 	}
 
+	testTopic := "test-topic-user-events"
+	testGroupID := "test-groupID"
+
+	producer := kafka.NewProducer(testBrokers)
+	consumer := kafka.NewConsumer(testBrokers, testTopic, testGroupID, logger)
+
 	env = &TestEnv{
 		Repo:  repo,
 		Cache: cache,
-		Svc:   service.NewUserService(repo, cache, logger, 5*time.Second),
+		Svc:   service.NewUserService(repo, cache, producer, logger, 5*time.Second),
 	}
 
 	code := m.Run()
