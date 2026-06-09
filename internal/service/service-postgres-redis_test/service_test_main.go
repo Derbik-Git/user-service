@@ -1,6 +1,7 @@
 package servPostgRedTest
 
 import (
+	"context"
 	"errors"
 	"log"
 	"log/slog"
@@ -105,13 +106,29 @@ func TestMain(m *testing.M) {
 	producer := kafka.NewProducer(testBrokers)
 	consumer := kafka.NewConsumer(testBrokers, testTopic, testGroupID, logger)
 
+	consumerCtx, canclConsumer := context.WithCancel(context.Background())
+
+	go consumer.StartKafkaConsumer(consumerCtx)
+
 	env = &TestEnv{
-		Repo:  repo,
-		Cache: cache,
-		Svc:   service.NewUserService(repo, cache, producer, logger, 5*time.Second),
+		Repo:          repo,
+		Cache:         cache,
+		KafkaProducer: producer,
+		KafkaConsumer: consumer,
+		Svc:           service.NewUserService(repo, cache, producer, logger, 5*time.Second),
 	}
 
 	code := m.Run()
+
+	canclConsumer()
+
+	if err := producer.Close(); err != nil {
+		logger.Error("failed to close kafka producer", "err", err)
+	}
+
+	if err := consumer.Close(); err != nil {
+		logger.Error("failed to close kafka consumer", "err", err)
+	}
 
 	_ = env.Cache.Close()
 	_ = env.Repo.Close()

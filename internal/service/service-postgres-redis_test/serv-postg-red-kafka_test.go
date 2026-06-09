@@ -226,7 +226,7 @@ func TestService_RedisFallbackToPG(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	svc := service.NewUserService(env.Repo, brokenCache, logger, 5*time.Second)
+	svc := service.NewUserService(env.Repo, brokenCache, env.KafkaProducer, logger, 5*time.Second)
 
 	result, err := svc.GetUser(ctx, user.ID)
 

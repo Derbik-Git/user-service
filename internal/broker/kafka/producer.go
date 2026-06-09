@@ -31,6 +31,7 @@ func NewProducer(brokers []string) *Producer {
 	}
 }
 
+// К СВЕДЕНИЮ: можно создание event вынести за этот метод и перед его вызовом, собирать структуру event, что бы потом например можно было вывести id успешно отправленного ивента
 func (p *Producer) PublishUserEvent(ctx context.Context, topic string, eventType string, user *domain.User) error { // вызывается в сервисном слое
 	event := domain.UserEvent{
 		ID:        uuid.New().String(), // генерируем уникальный идентификатор для события, который может использоваться для отслеживания и обеспечения идемпотентности при обработке событий
@@ -49,4 +50,8 @@ func (p *Producer) PublishUserEvent(ctx context.Context, topic string, eventType
 		Key:   []byte(strconv.FormatInt(user.ID, 10)), //(что бы операции над одним пользователем по user.ID попадали в одну партицию) таким образом переводим user.ID, который является ключом для kafka, в строку а затем в байты, потому что kafka принимает только байты
 		Value: b,
 	})
+}
+
+func (p *Producer) Close() error {
+	return p.kafkaWriter.Close()
 }

@@ -20,7 +20,7 @@ type UserRepository interface {
 }
 
 type EventProducer interface {
-	PublishUserEvent(ctx context.Context, event *domain.UserEvent) error
+	PublishUserEvent(ctx context.Context, topic string, eventType string, user *domain.User) error
 }
 
 // менять
@@ -69,7 +69,7 @@ func (s *Service) CreateUser(ctx context.Context, email, name string) (*domain.U
 	}
 
 	if s.broker != nil {
-		err = s.broker.PublishUserEvent(ctx, event)
+		err = s.broker.PublishUserEvent(ctx, domain.TopicUserEvents, domain.UserCreated, u)
 		if err != nil {
 			s.log.Error(op, slog.String("msg", "failed to publish to kafka"), sl.Err(err))
 		} else {
@@ -143,19 +143,12 @@ func (s *Service) UpdateUser(ctx context.Context, u *domain.User) (*domain.User,
 		}
 	}
 
-	event := &domain.UserEvent{
-		ID:        uuid.New().String(),
-		Type:      domain.UserUpdated,
-		Payload:   *updated,
-		CreatedAt: time.Now(),
-	}
-
 	if s.broker != nil {
-		err := s.broker.PublishUserEvent(ctx, event)
+		err := s.broker.PublishUserEvent(ctx, domain.TopicUserEvents, domain.UserUpdated, updated)
 		if err != nil {
 			s.log.Error(op, slog.String("msg", "failed publish to kafka"), sl.Err(err))
 		} else {
-			s.log.Info(op, slog.String("msg", "event publish"), slog.String("event_id", event.ID))
+			s.log.Info(op, slog.String("msg", "event publish"))
 		}
 	}
 
@@ -183,21 +176,12 @@ func (s *Service) DeleteUser(ctx context.Context, id int64) error {
 		}
 	}
 
-	event := &domain.UserEvent{
-		ID:   uuid.New().String(),
-		Type: domain.UserDeleted,
-		Payload: domain.User{
-			ID: id,
-		},
-		CreatedAt: time.Now(),
-	}
-
 	if s.broker != nil {
-		err := s.broker.PublishUserEvent(ctx, event)
+		err := s.broker.PublishUserEvent(ctx, domain.TopicUserEvents, domain.UserDeleted, &domain.User{ID: id})
 		if err != nil {
 			s.log.Error(op, slog.String("msg", "failed to publish to kafka"), sl.Err(err))
 		} else {
-			s.log.Info(op, slog.String("msg", "event published"), slog.String("event_id", event.ID))
+			s.log.Info(op, slog.String("msg", "event published"))
 		}
 	}
 
