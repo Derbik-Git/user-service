@@ -1,4 +1,4 @@
-package servPostgRedTest
+package servPostgRedKafkaTest
 
 import (
 	"context"
@@ -7,11 +7,13 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/Derbik-Git/user-service/internal/broker/kafka"
 	"github.com/Derbik-Git/user-service/internal/cache"
+	"github.com/Derbik-Git/user-service/internal/domain"
 	"github.com/Derbik-Git/user-service/internal/migrate"
 	"github.com/Derbik-Git/user-service/internal/repository/postgres"
 	"github.com/Derbik-Git/user-service/internal/service"
@@ -32,6 +34,101 @@ type TestEnv struct {
 }
 
 var env *TestEnv
+
+// Корзина для перехвата сообщений для тестов из consumer за счёт метода Add, который берёт event из консьюмера и кладёт его в эту структуру, из которой мы в дальнейшем будем вычитывать сообщение и проверять его целостность и правильность
+type TestEventStore struct {
+	mu     sync.RWMutex // для контроля доступа горутин к переменным
+	events []domain.UserEvent
+}
+
+// вызывается консьюмером
+func (s *TestEventStore) Add(event domain.UserEvent) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.events = append(s.events, event)
+}
+
+// этот метод нужен, что бы используя его, в тестах находить ивент по определённому email
+func (s *TestEventStore) FindByEmail(email string) (*domain.UserEvent, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for _, e := range s.events {
+		if e.Payload.Email == email {
+			return &e, true
+		}
+	}
+	return nil, false
+}
+
+// !! Эта глобальная переменная нужна для того, что бы при сборке консьюмера мы могли передавать метод Add
+/* пердаётся аргументом в NewConsumer
+
+consumer := kafka.NewConsumer(testBrokers, testTopic, testGroupID, logger, func(event domain.UserEvent) error {
+		testEventStore.Add(event)
+		return nil
+	},
+	)
+*/
+var TestEventStoreGlobal = TestEventStore{}
+
+// Сама по себе вся kafka работает асинхронно, а нам нужно уметь получать сообщения от kafka, для етого мы должны сделать бесконечный цикл чтения сообщений, с ожиданием до момента прихода сообщения, иначе программа может попытаться достать сообщение в момент, пока оно ещё не успело прийти (Мы букально говорим, я не буду пытаться извлекать сообщение сразу, я подожду пока оно придёт)
+// ожидатель события с ограничением по времени
+func waitForKafkaEvent(t *testing.T, targetEmail string) *domain.UserEvent {
+
+	timeout := time.After(5 * time.Second) // максимальное время ожидания прихода сообщения от kafka
+
+	ticker := time.NewTicker(100 * time.Millisecond) // создаём тикер, который будет стараться прочитать сообщение каждую секунду, если его не добавлять, программа может пытаться читать сообщение тысячи раз, это излишне нагрузит процессор
+
+	for {
+		select { // селект останавливает выполнение приостанавливает программу, на момент, пока ждёт какой канал первым сработает
+
+		case <-timeout:
+			t.Fatalf("Таймаут: сообщение для email %s так и не пришло в Kafka", targetEmail)
+			return nil
+
+		case <-ticker.C:
+			if event, found := TestEventStoreGlobal.FindByEmail(targetEmail); found {
+				return event
+			}
+
+		}
+	} // ! если мы не нашли никакого сообщения, то select пойдёт на следующий круг и будет вновь ждать либо timeout остановки, либо каждые 100 миллисекунд. Всё повториться в случае не обнаружени сообщения
+
+}
+
+// Такой же метод как и waitForKafkaEvent, тольок этот может возвращать большое количество сообщений. Это нужно для теста о проверки порядка сообщений
+func waitForKafkaEventBatch(t *testing.T, targetID int64, expectedCount int) []domain.UserEvent {
+	timeout := time.After(5 * time.Second)
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+
+	matchedEvents := []domain.UserEvent{} // перемнная куда будут помещаться все подходящие
+
+	for {
+		select {
+		case <-timeout:
+			t.Fatalf("Таймаут: не удалось получить %d ивентов с id пользователей %d удалось получить только %d пользователей в kafka", expectedCount, targetID, len(matchedEvents))
+			return nil
+
+		case <-ticker.C:
+
+			matchedEvents = []domain.UserEvent{} // обнуляем слайс matchedEvents на каждой итерации, что бы не дублировать события
+
+			TestEventStoreGlobal.mu.RLock()
+			for _, e := range TestEventStoreGlobal.events { // за счёт глобальной переменной смотрим(перебираем циклом) вообще все созданные ивенты в ивент сторе
+				if e.Payload.ID == targetID { // проверяем какие из всех ивентов подходят по id именно созданного в тесте пользователя, не ивента (targetID - это id пользователя, мы просто передаём в метод CreateUser.ID например)
+					matchedEvents = append(matchedEvents, e)
+				}
+			}
+			TestEventStoreGlobal.mu.RUnlock()
+
+			if len(matchedEvents) >= expectedCount {
+				return matchedEvents
+			}
+		}
+	}
+}
 
 // Поскольку тесты запускаются параллельно (t.Parallel()), все они будут писать события в один топик test-topic-user-events. Чтобы тесты не мешали друг другу, нам нужно "складывать" все прочитанные консюмером события в потокобезопасное хранилище, где каждый тест сможет найти своё событие по уникальному Email или ID.
 
@@ -83,7 +180,6 @@ func TestMain(m *testing.M) {
 
 	if err := waitForKafka(testBrokers); err != nil {
 		log.Fatal(err)
-
 	}
 
 	repo, err := waitForPostgres(dsn)
@@ -106,7 +202,11 @@ func TestMain(m *testing.M) {
 	testGroupID := "test-groupID"
 
 	producer := kafka.NewProducer(testBrokers)
-	consumer := kafka.NewConsumer(testBrokers, testTopic, testGroupID, logger)
+	consumer := kafka.NewConsumer(testBrokers, testTopic, testGroupID, logger, func(event domain.UserEvent) error {
+		TestEventStoreGlobal.Add(event)
+		return nil
+	},
+	)
 
 	consumerCtx, canclConsumer := context.WithCancel(context.Background())
 

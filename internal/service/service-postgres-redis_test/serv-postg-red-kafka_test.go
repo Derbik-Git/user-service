@@ -1,4 +1,4 @@
-package servPostgRedTest
+package servPostgRedKafkaTest
 
 import (
 	"context"
@@ -13,6 +13,7 @@ import (
 	"github.com/Derbik-Git/user-service/internal/cache"
 	"github.com/Derbik-Git/user-service/internal/domain"
 	"github.com/Derbik-Git/user-service/internal/service"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -29,6 +30,10 @@ import (
 ✔ Concurrent access
 ✔ Concurrent update
 ✔ Redis fallback
+✔ Kafka
+✔
+✔
+✔
 */
 
 func newUniqueUser() *domain.User {
@@ -353,4 +358,51 @@ func TestService_Concurrent_UpdateAndGet(t *testing.T) {
 	cacheUser, err := env.Cache.GetUser(ctx, user.ID)
 	require.NoError(t, err)
 	require.Equal(t, pgUser.Email, cacheUser.Email)
+}
+
+// Kafka тесты
+
+// проверка жизненного цикла
+func TestKafka_LifeCicle_Integrstion(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	user := newUniqueUser()
+	createdUser, err := env.Svc.CreateUser(ctx, user.Email, user.Name)
+	require.NoError(t, err)
+	assert.Equal(t, user.Email, createdUser.Email)
+	assert.Equal(t, user.Name, createdUser.Name)
+
+	updatedEmail := "updated_" + user.Email
+	createdUser.Email = updatedEmail
+	_, err = env.Svc.UpdateUser(ctx, createdUser)
+	require.NoError(t, err)
+
+	updateEvent := waitForKafkaEvent(t, updatedEmail)
+	require.NotNil(t, updateEvent)
+	assert.Equal(t, updatedEmail, updateEvent.Payload.Email)
+}
+
+// проверяет порядок сообщений
+func TestKafka_Ordering_integration(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	user := newUniqueUser()
+	createdUser, err := env.Svc.CreateUser(ctx, user.Email, user.Name)
+	require.NoError(t, err)
+
+	expectedNames := []string{"Name1", "Name2", "Name4", "Name5"}
+	for _, name := range expectedNames {
+		createdUser.Name = name
+		_, err = env.Svc.UpdateUser(ctx, createdUser)
+		require.NoError(t, err)
+	}
+
+	userEvents := waitForKafkaEventBatch(t, createdUser.ID, len(expectedNames)+1) // +1 так как мы ожидаем событие создания пользователя
+
+	// сравниваем с ожидаемые имиена из массива expectedNames, с тем, что выдала kafka(userEvents)
+	for i, expectedName := range expectedNames {
+		assert.Equal(t, expectedName, userEvents[i+1].Payload.Name) // i+1 так как первый элемент в userEvents это событие создания пользователя, а не обновления
+	}
 }
