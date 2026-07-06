@@ -62,7 +62,7 @@ func (s *TestEventStore) FindByEmail(email string) (*domain.UserEvent, bool) {
 }
 
 // !! Эта глобальная переменная нужна для того, что бы при сборке консьюмера мы могли передавать метод Add
-/* пердаётся аргументом в NewConsumer
+/* передаётся аргументом в NewConsumer
 
 consumer := kafka.NewConsumer(testBrokers, testTopic, testGroupID, logger, func(event domain.UserEvent) error {
 		testEventStore.Add(event)

@@ -13,16 +13,16 @@ import (
 // Это мы будем реализовывать путём, что сюда мы интегрируем hendler(приёмник) для UserEvent, который будет брать доставленное в консьюмер сообщение и отправлять его в тесты на проверку обратно в тесты сервиса на стороне продюсера
 
 // Функция(тип для структуры consumer), которая берёт сообщения из консьюмера и отправляет его на проверку в тесты
-type HendlerAddEventForTest func(event domain.UserEvent) error // этот тип нужен исключительно для того, что бы добавить поле в Consumer с таким же типом как в этой строке(16), что бы потом за счёт NewConsumer передать в структуру Consumer метод, отвечающий за взятие ивента и передачи его тестам для проверки, что бы мы могли проверить, что именно это сообщение дошло до консьюмера и было обработано, а не какое то другое сообщение, которое может прийти в консьюмер от другого микросервиса, который тоже пишет в этот топик, но мы не хотим его обрабатывать, а хотим проверить именно наше сообщение от нашего продюсера, который мы отправляем в тестах сервисатип метода и метод должны совпасть для успешной передачи и небыло конфиликта из за разных типов данных- func(ctx context.Context, event domain.UserEvent) error
+type HendlerAddEvent func(event domain.UserEvent) error // этот тип нужен исключительно для того, что бы добавить поле в Consumer с таким же типом как в этой строке(16), что бы потом за счёт NewConsumer передать в структуру Consumer метод, отвечающий за взятие ивента и передачи его тестам для проверки, что бы мы могли проверить, что именно это сообщение дошло до консьюмера и было обработано, а не какое то другое сообщение, которое может прийти в консьюмер от другого микросервиса, который тоже пишет в этот топик, но мы не хотим его обрабатывать, а хотим проверить именно наше сообщение от нашего продюсера, который мы отправляем в тестах сервисатип метода и метод должны совпасть для успешной передачи и небыло конфиликта из за разных типов данных- func(ctx context.Context, event domain.UserEvent) error
 
 type Consumer struct {
 	reader  *kafka.Reader
 	log     *slog.Logger
-	handler HendlerAddEventForTest // сюда будем передавать логику обработки
+	handler HendlerAddEvent // сюда будем передавать логику обработки
 	//(Якобы это другой сервис) сюда можно вставить добавить сервис, что бы потом добавить в StartKafkaConsumer функцию из сервиса для проверки идемпотентности
 }
 
-func NewConsumer(brokers []string, topic string, groupID string, log *slog.Logger, handlerForTests HendlerAddEventForTest) *Consumer {
+func NewConsumer(brokers []string, topic string, groupID string, log *slog.Logger, handlerForTests HendlerAddEvent) *Consumer {
 	return &Consumer{
 		log:     log,
 		handler: handlerForTests,
@@ -52,29 +52,41 @@ func (c *Consumer) StartKafkaConsumer(ctx context.Context) {
 			continue
 		}
 
-		var event domain.UserEvent
-		if err := json.Unmarshal(m.Value, &event); err != nil {
-			c.log.Error("failed to unmarshall event", slog.Any("error", err))
-			continue // Если не смогли распаковать, идем дальше, иначе будем падать
-		} else {
-			c.log.Info("processing event", slog.String("type", event.Type), slog.Int64("user_id", event.Payload.ID))
+		if err := c.ProcessRawMessag(ctx, m.Value); err != nil {
+			// Если обработка сломалась (например, БД упала), делаем continue
+			// и не вызываем CommitMessages, чтобы сообщение не потерялось
+			continue
 		}
 
+		// идемпотентность на стороне консьюмера осуществляется следующим образом: создаёт отдельная таблица, для записис всех приходящих ивентов, и в случае идентичного пришедшего ивента, база данных возвращает ошибку о нарушении уникальности id ивента, таким образом сервис получает эту ошибку, проверяет она ли эта(ошибка индивидуальности) и возвращает return nil, nil если это она, то есть не работает с этим сообщением а игнорирует повторное, потому что судя по проаеренной ошибке, это ошибка уникальности, соответсвенно идентичное событие мы уже записывали и над ним уже была проведена работа, соответственно return nil, nil, означает игнарирование дублирующегося сообщения, таким образом сервис не выполнит операцию дважды
 		// на этом месте должен быть метод из сервиса, который обеспечивает идемпотентность проверяет это сообщение есть ли оно в таблице проверки идемпотентности и если от туда пришла ошибка -> читай ниже
 		// !!!!! в этой логике, когда что то не получается и мы обрабатваем ошибку, например база данных не доступна, мы делаем continue(и продолжаем пытаться достать это сообщение, потому что FetchMessage извлекает, но не даёт сигнал о доставке сообщения, и при возникновении ошибки мы пишем continue и каждый раз продолжаем работать над этим сообщением), то есть не доходим до подтверждения выполнения операции, а возвращаемся заного к этой закладке_1._(сообщению), за счёт того что мы использовали FetchMessage, таким образом оставив закладку и сказав, что мы работаем над этим сообщением, и пока его не обработаем, от него не отойдём. Короче мы в начачале за счёт FetchMessage, говорим что работаем именно над этим сообщением и при ошибке пишем continue и возвращаемся его получить целостно заного, не следующее, а из за того, что мы сказали за счёт FetchMessage что начали работу над ним и работаем над ним и в случае возникновения ошибки будем дальше пробовать его извлечь из брокера.
-		if c.handler != nil {
-			err := c.handler(event)
-			if err != nil {
-				c.log.Error("handler failed to process message", slog.Any("error", err))
-				continue
-			}
-		}
 
 		// подтверждение выполнения операции
 		if err := c.reader.CommitMessages(ctx, m); err != nil {
 			c.log.Error("failed to commit message", slog.Any("error", err))
 		}
 	}
+}
+
+func (c *Consumer) ProcessRawMessag(ctx context.Context, value []byte) error {
+	var event domain.UserEvent
+	if err := json.Unmarshal(value, &event); err != nil {
+		c.log.Error("failed to unmarshall event", slog.Any("error", err))
+		return err
+	}
+
+	c.log.Info("processing event", slog.String("type", event.Type), slog.Int64("user_id", event.Payload.ID))
+
+	if c.handler != nil {
+		err := c.handler(event)
+		if err != nil {
+			c.log.Error("handler failed to process message", slog.Any("error", err))
+			return err
+		}
+	}
+
+	return nil
 }
 
 // используется при выключении сервиса, что бы закрыть соединение с брокером kafka

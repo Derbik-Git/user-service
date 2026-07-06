@@ -2,6 +2,7 @@ package servPostgRedKafkaTest
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -405,4 +406,64 @@ func TestKafka_Ordering_integration(t *testing.T) {
 	for i, expectedName := range expectedNames {
 		assert.Equal(t, expectedName, userEvents[i+1].Payload.Name) // i+1 так как первый элемент в userEvents это событие создания пользователя, а не обновления
 	}
+}
+
+// Проверка на нагрзку/потокобезопасность
+func TestKafka_ConcurrentPublishing_integration(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	const numUsers = 50
+	var wg sync.WaitGroup
+	wg.Add(numUsers)
+
+	emails := make([]string, numUsers) // переменная, в которую мы будем помещать email сгенерированного пользователя по индексу итерации цикла
+
+	for i := 0; i < numUsers; i++ {
+		go func(idx int) { // Когда интерпретатор видит (i), он берет текущее значение счетчика (например, 0), копирует его в новую локальную переменную внутри стека новой горутины и называет её idx. Теперь для этой конкретной горутины idx навсегда равен 0, даже если внешняя переменная i изменится до 1, 2 или 50. Это полностью изолирует данные.
+			defer wg.Done()
+			user := newUniqueUser()
+			emails[idx] = user.Email // помещаем email сгенерированного пользователя по индексу(для массива) по значению итерации цикла, что бы потом через wqitForKafkaEvent проверить всё ли успешно записалось
+			_, err := env.Svc.CreateUser(ctx, user.Email, user.Name)
+			require.NotNil(t, err)
+		}(i)
+	}
+	wg.Wait()
+
+	// проходимся по массиву emails и смотрим есть ли в нём все email(должно быть 50 штук)
+	for _, email := range emails {
+		event := waitForKafkaEvent(t, email)
+		require.NotNil(t, event, "потеряно сообщение для email: %s", email)
+
+	}
+}
+
+// тест требует внимания!!!
+// проверка на идемпотентность
+func TestKafka_Idempotency_integration(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	user := newUniqueUser()
+	_, err := env.Svc.CreateUser(ctx, user.Email, user.Name)
+	require.NoError(t, err)
+
+	firstEvent := waitForKafkaEvent(t, user.Email) // мы кладём в кафку наш первый ивент (иммитируем базовую работу kafka)
+	require.NotNil(t, firstEvent)
+
+	TestEventStoreGlobal.mu.Lock()
+	TestEventStoreGlobal.events = []domain.UserEvent{} // !!!!! таким образом мы отчистили нашу корзину с ивентами(это делается для проверки, если на той стороне консьюмер идемпотентен, то бд выдаст ошибку и корзина останется пустой, так как просто пропустит повторяющееся сообщениеи не запишет его в корзину, если же что то пойдёт не так(сервис пропустит идентичное сообщение), то в очищенной коризне появится сообщение, чего не должно произойти, так как мы отправили собщение(из за UNIQUE не должно принять второе такое же), очистили корзину, из за ошибки бд(UNIQUE) не должно записаться в корзину)
+	TestEventStoreGlobal.mu.Unlock()
+
+	duplicateBytes, err := json.Marshal(firstEvent) // переводим сообщение в байты, что бы консьюмер думал что это сообщение реально от kafka, путём того, что переводимего в байты
+	require.NoError(t, err)
+
+	err = env.KafkaConsumer.ProcessRawMessag(ctx, duplicateBytes) // отправляем сообщение и ожидаем что программа не упадёт и не выдаст ошибку, а просто проигнорирует дублирующиеся сообщение, в случае бд ошибки unique, не упадёт и продолжит работать как обычно
+	require.NoError(t, err, "Консьюмер вернул ошибку при обработке дубликата!")
+
+	TestEventStoreGlobal.mu.RLock()
+	eventsCount := len(TestEventStoreGlobal.events) // !!!! важная проверка того, что наша корзина не пополнилась
+	TestEventStoreGlobal.mu.RUnlock()
+
+	assert.Equal(t, 0, eventsCount, "Идемпотентность нарушена! Дубликат сообщения прошел сквозь защиту и снова обработался!")
 }
