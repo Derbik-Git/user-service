@@ -52,7 +52,7 @@ func (c *Consumer) StartKafkaConsumer(ctx context.Context) {
 			continue
 		}
 
-		if err := c.ProcessRawMessag(ctx, m.Value); err != nil {
+		if err := c.ProcessRawMessage(ctx, m.Value); err != nil {
 			// Если обработка сломалась (например, БД упала), делаем continue
 			// и не вызываем CommitMessages, чтобы сообщение не потерялось
 			continue
@@ -69,7 +69,7 @@ func (c *Consumer) StartKafkaConsumer(ctx context.Context) {
 	}
 }
 
-func (c *Consumer) ProcessRawMessag(ctx context.Context, value []byte) error {
+func (c *Consumer) ProcessRawMessage(ctx context.Context, value []byte) error {
 	var event domain.UserEvent
 	if err := json.Unmarshal(value, &event); err != nil {
 		c.log.Error("failed to unmarshall event", slog.Any("error", err))

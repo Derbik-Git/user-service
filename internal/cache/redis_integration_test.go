@@ -147,8 +147,8 @@ func TestRedis_DeleteNonExistentUser(t *testing.T) {
 	ctx := context.Background()
 
 	err := cache.DeleteUser(ctx, 88888888)
-	require.NoError(t, err)
-	assert.Contains(t, err, "redis DEL failed")
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "redis DEL failed")
 }
 
 func TestRedis_GetNonKeyRedis(t *testing.T) { // пытаемся достать пользователя из несуществуюшего ключа redis, поэтому ожидаем ошибку

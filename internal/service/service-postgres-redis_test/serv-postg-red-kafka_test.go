@@ -458,7 +458,7 @@ func TestKafka_Idempotency_integration(t *testing.T) {
 	duplicateBytes, err := json.Marshal(firstEvent) // переводим сообщение в байты, что бы консьюмер думал что это сообщение реально от kafka, путём того, что переводимего в байты
 	require.NoError(t, err)
 
-	err = env.KafkaConsumer.ProcessRawMessag(ctx, duplicateBytes) // отправляем сообщение и ожидаем что программа не упадёт и не выдаст ошибку, а просто проигнорирует дублирующиеся сообщение, в случае бд ошибки unique, не упадёт и продолжит работать как обычно
+	err = env.KafkaConsumer.ProcessRawMessage(ctx, duplicateBytes) // отправляем сообщение и ожидаем что программа не упадёт и не выдаст ошибку, а просто проигнорирует дублирующиеся сообщение, в случае бд ошибки unique, не упадёт и продолжит работать как обычно
 	require.NoError(t, err, "Консьюмер вернул ошибку при обработке дубликата!")
 
 	TestEventStoreGlobal.mu.RLock()
@@ -467,3 +467,5 @@ func TestKafka_Idempotency_integration(t *testing.T) {
 
 	assert.Equal(t, 0, eventsCount, "Идемпотентность нарушена! Дубликат сообщения прошел сквозь защиту и снова обработался!")
 }
+
+// по желанию можно будет добавить обширное количество тестов как я сделал c redis, например тест на игнорирование kafka в случае указания несуществующих портов

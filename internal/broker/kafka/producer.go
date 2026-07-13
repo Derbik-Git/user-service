@@ -13,15 +13,21 @@ import (
 	"github.com/segmentio/kafka-go"
 )
 
+// !!! в данном случае интерфес создавался, что бы мы в тестах могли подставить сюда свой мок, напоминаю так же что интерфейсы например в луковице могут служить, что бы обозначать какие методы могут лежать в следуюшем слое луковицы, а находиться интерфесы должны по месту применения
+type massageWriter interface {
+	WriteMessages(ctx context.Context, msgs ...kafka.Message) error
+	Close() error
+}
+
 type Producer struct {
-	kafkaWriter *kafka.Writer
+	KafkaWriter massageWriter // !!!!!!! поле kafkaWriter требует что бы туда положили объекты(структуру) типа massageWriter(интерфейс), который должен реализовать WriteMessage(), Close(), то есть структура, которая кладётся в структуру Producer, должна реализовывать методы WriteMessage(), Close(). Далее в функции NewProducer мы кладём в kafkaWriter струткуру Writer из библиотеки kafka(&kafka.Writer), go заглядывает в эту библиотеку и видит что такие методы эта структура реализует, таким образом проверка проходит, иоже использовать эти методы, а в тесатх подставлять свой мок
 }
 
 // Это функция настройки продюсера, она вызывается один раз при запуске го приложения, передаются адреса kafka черверов, функция устанавливает с ними постоянное сетевое соединение(трубу) и возвращает готовый producer, который мы используем для отправки сообщений p.kafkaWriter.WriteMessages(ctx, kafka.Message{ в функции PublishUserEvent
 // передаётся: kafka.NewProducer([]string{"localhost:9091", "localhost:9092", ...}), это позволяетс продюсеру установить начальное соединение с кластером
 func NewProducer(brokers []string) *Producer {
 	return &Producer{
-		kafkaWriter: &kafka.Writer{
+		KafkaWriter: &kafka.Writer{
 			Addr:         kafka.TCP(brokers...), // принимает список адресов, по типу локалхоста, для установки начального соединения с кластером. Троеточие распаковывает элементы слайса на отдельные аргументы функции в данном случае это функция TCP
 			Balancer:     &kafka.Hash{},         // балансировщик определяет в какую партицию отправлять сообщение. !!! Если у сообщения есть ключ (Key), Kafka вычисляет хэш от этого ключа и отправляет сообщение в партицию с номером hash % N, где N — общее число партиций в топике.
 			Async:        false,                 // Этот параметр асинхронности отвечает за то, будет ли producer ждать подтверждения от брокера о том, что сообщение было сохранено и реплецированно на все оставшиеся брокеры, но в этот учёт не идёт ожидание получения сообщения об успешном получении данных со стороны другого микросервиса
@@ -45,7 +51,7 @@ func (p *Producer) PublishUserEvent(ctx context.Context, topic string, eventType
 		return fmt.Errorf("marshall event: %w", err)
 	}
 
-	return p.kafkaWriter.WriteMessages(ctx, kafka.Message{
+	return p.KafkaWriter.WriteMessages(ctx, kafka.Message{
 		Topic: topic,
 		Key:   []byte(strconv.FormatInt(user.ID, 10)), //(что бы операции над одним пользователем по user.ID попадали в одну партицию) таким образом переводим user.ID, который является ключом для kafka, в строку а затем в байты, потому что kafka принимает только байты
 		Value: b,
@@ -53,5 +59,5 @@ func (p *Producer) PublishUserEvent(ctx context.Context, topic string, eventType
 }
 
 func (p *Producer) Close() error {
-	return p.kafkaWriter.Close()
+	return p.KafkaWriter.Close()
 }
