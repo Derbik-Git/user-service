@@ -3,13 +3,13 @@ package mockKafka
 import "github.com/Derbik-Git/user-service/internal/domain"
 
 type MockConsumerHandler struct {
-	receivedEvent domain.UserEvent
-	isCalled      bool
-	errToReturn   error
+	ReceivedEvent domain.UserEvent // сам пользователь, проверять дынные = брать с этого поля
+	IsCalled      bool             // было ли вызвано
+	ErrToReturn   error
 }
 
 func (m *MockConsumerHandler) HendlerAddEvent(event domain.UserEvent) error {
-	m.receivedEvent = event
-	m.isCalled = true
-	return m.errToReturn
+	m.ReceivedEvent = event
+	m.IsCalled = true
+	return m.ErrToReturn
 }
