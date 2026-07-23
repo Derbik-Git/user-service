@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net"
 
+	"github.com/Derbik-Git/user-service/internal/metrics"
 	"github.com/Derbik-Git/user-service/internal/server"
 	"google.golang.org/grpc"
 )
@@ -16,7 +17,9 @@ type App struct {
 }
 
 func NewApp(log *slog.Logger, userService server.UserService, port int) *App {
-	gRPCServer := grpc.NewServer()
+	gRPCServer := grpc.NewServer(
+		grpc.UnaryInterceptor(metrics.UnaryInterceptor()), // зарегестрировали для нашего grpc, перехватчик для prometheus
+	)
 
 	server.RegisteGRPCrServer(gRPCServer, userService, log)
 
