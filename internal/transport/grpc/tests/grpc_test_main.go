@@ -38,7 +38,7 @@ func TestMain(m *testing.M) {
 
 	// сборка(инициализация) приложения:
 	// _
-	service := service.NewUserService(postg, cache, logger, 5*time.Second) // создаётся экземпляр основной логики, с переданными зависимостями (хранилище, кэш, логгер и таймаут для кэша)
+	service := service.NewUserService(postg, cache, nil, logger, 5*time.Second) // создаётся экземпляр основной логики, с переданными зависимостями (хранилище, кэш, логгер и таймаут для кэша)
 
 	newServer := grpc.NewServer()
 

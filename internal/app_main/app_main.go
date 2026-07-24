@@ -2,12 +2,15 @@ package appassembling
 
 import (
 	"log/slog"
+	"net/http"
 	"time"
 
 	"github.com/Derbik-Git/user-service/internal/app"
+	"github.com/Derbik-Git/user-service/internal/broker/kafka"
 	"github.com/Derbik-Git/user-service/internal/cache"
 	"github.com/Derbik-Git/user-service/internal/repository/postgres"
 	"github.com/Derbik-Git/user-service/internal/service"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -15,7 +18,7 @@ type App struct {
 	GRPCSrv *app.App
 }
 
-func NewAppMain(log *slog.Logger, grpcPort int, postgresDSN string, redisAddrs []string, cacheTTL time.Duration, opts *redis.ClusterOptions) (*App, func() error) {
+func NewAppMain(log *slog.Logger, grpcPort int, postgresDSN string, redisAddrs []string, kafkaBrokers []string, cacheTTL time.Duration, opts *redis.ClusterOptions) (*App, func() error) {
 	const op = "app_main.NewAppMain"
 
 	if log == nil {
@@ -43,9 +46,23 @@ func NewAppMain(log *slog.Logger, grpcPort int, postgresDSN string, redisAddrs [
 		}
 	}
 
-	userService := service.NewUserService(repo, cacheInterface, log, cacheTTL) // тут передаём кеш интерейс в сервис, где и будет логика работы с редисом, соответственно если интерфейс не узнал о структуре, реализующей эти методы(логика чуть выше), кеша не будут включены в работу
+	eventProducer := kafka.NewProducer(kafkaBrokers)
+	log.Info("kafka producer initialized", slog.Any("brokers", kafkaBrokers))
+
+	userService := service.NewUserService(repo, cacheInterface, eventProducer, log, cacheTTL) // тут передаём кеш интерейс в сервис, где и будет логика работы с редисом, соответственно если интерфейс не узнал о структуре, реализующей эти методы(логика чуть выше), кеша не будут включены в работу
 
 	grpcApp := app.NewApp(log, userService, grpcPort) // ВОЗВРАЩАЕТ струтктуру, которую app_main.go должен заполнить, и передавть в свою структуру App с параметром экземляра структуры из app.go, тем амым app.go передаёт струткуру, которую нужнозаполнить, что бы он работал, мы заполняем с данными из конфига в main.go, и передаём обратно в app.go через структуру в app_main.go
+
+	mux := http.NewServeMux()                  // http.NewServeMux() — это как диспетчер или швейцар. Его единственная задача — смотреть на URL-адрес, по которому пришел пользователь, и решать, какому куску кода отдать этот запрос.
+	mux.Handle("/metrics", promhttp.Handler()) // "Если кто-то придет по адресу /metrics, отправь его к функции promhttp.Handler()". promhttp.Handler() это готовая магия от разработчиков Прометеуса. Эта функция сама лезет в оперативную память твоего приложения, собирает все счетчики, которые мы настроили в Interceptor, превращает их в красивый текст и отдает клиенту.
+
+	go func() {
+		log.Info("starting prometheus metrics server", slog.String("port", "2112"))
+		if err := http.ListenAndServe(":2112", mux); err != nil {
+			// Если сервер не смог запуститься (например, порт занят), просто пишем в лог
+			log.Error("metrics server failed", slog.String("op", op), slog.String("err", err.Error()))
+		}
+	}()
 
 	application := &App{
 		GRPCSrv: grpcApp,
@@ -58,6 +75,12 @@ func NewAppMain(log *slog.Logger, grpcPort int, postgresDSN string, redisAddrs [
 		if cacheClose != nil { // если cacheClose, не был создан, значит редиса просто нету и условие не выполняется
 			if e := cacheClose(); e != nil { //если redis был, мы его сразу после этого аккуратно закрывем по завершении задачи редисом, во избежании утечки соединений/памяти
 				err = e // если произошла ошибка закрытия redis, то сохраняем ее в err, что бы метод cleanup() мог её вернуть
+			}
+		}
+
+		if eventProducer != nil {
+			if e := eventProducer.Close(); e != nil && err != nil {
+				err = e
 			}
 		}
 

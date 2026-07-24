@@ -21,7 +21,7 @@ func NewApp(log *slog.Logger, userService server.UserService, port int) *App {
 		grpc.UnaryInterceptor(metrics.UnaryInterceptor()), // зарегестрировали для нашего grpc, перехватчик для prometheus
 	)
 
-	server.RegisteGRPCrServer(gRPCServer, userService, log)
+	server.RegisterGRPCServer(gRPCServer, userService, log)
 
 	return &App{
 		log:        log,
