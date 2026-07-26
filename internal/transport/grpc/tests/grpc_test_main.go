@@ -9,6 +9,7 @@ import (
 	"time"
 
 	userv1 "github.com/Derbik-Git/protos-tren-redis/user/v1"
+	"github.com/Derbik-Git/user-service/internal/broker/kafka"
 	"github.com/Derbik-Git/user-service/internal/cache"
 	"github.com/Derbik-Git/user-service/internal/repository/postgres"
 	"github.com/Derbik-Git/user-service/internal/server"
@@ -36,9 +37,17 @@ func TestMain(m *testing.M) {
 		log.Fatal(err)
 	}
 
+	testKafkaBrokers := os.Getenv("SERVICE_TEST_KAFKA_BROKERS")
+	testBrokers := []string{}
+	if testKafkaBrokers != "" {
+		testBrokers = []string{testKafkaBrokers}
+	}
+
+	producer := kafka.NewProducer(testBrokers)
+
 	// сборка(инициализация) приложения:
 	// _
-	service := service.NewUserService(postg, cache, nil, logger, 5*time.Second) // создаётся экземпляр основной логики, с переданными зависимостями (хранилище, кэш, логгер и таймаут для кэша)
+	service := service.NewUserService(postg, cache, producer, logger, 5*time.Second) // создаётся экземпляр основной логики, с переданными зависимостями (хранилище, кэш, логгер и таймаут для кэша)
 
 	newServer := grpc.NewServer()
 
@@ -75,6 +84,18 @@ func TestMain(m *testing.M) {
 	client = userv1.NewUserServiceClient(conn) // создаём сам gRPC клиент, за счёт которого будем дёргать методы
 
 	code := m.Run()
+
+	if err := producer.Close(); err != nil {
+		log.Printf("failed to close producer: %v", err)
+	}
+
+	if err := postg.Close(); err != nil {
+		log.Printf("failed to close postgres: %v", err)
+	}
+
+	if err := cache.Close(); err != nil {
+		log.Printf("failed to close cache: %v", err)
+	}
 
 	conn.Close()
 	newServer.Stop()
