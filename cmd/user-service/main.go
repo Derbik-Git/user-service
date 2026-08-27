@@ -22,7 +22,7 @@ type Config struct {
 	// env:"REDIS_ADDRS" - cleanenv сам разобьет строку "host1,host2" на массив строк!
 	RedisAddres []string `env:"REDIS_ADDRS"`
 
-	KafkaBrokers []string `env:"KAFA_BROKERS" env-default:"localhost:9092"`
+	KafkaBrokers []string `env:"KAFKA_BROKERS" env-default:"localhost:9092"`
 
 	// env-default:"5m" - cleanenv сам распарсит строку "5m" в тип time.Duration (5 минут)
 	CacheTTL time.Duration `env:"CACHE_TTL" env-default:"5m"`
