@@ -198,7 +198,7 @@ func TestGRPC_Load(t *testing.T) {
 
 	for i := 1; i <= 200; i++ {
 		_, err := client.CreateUser(ctx, &userv1.CreateUserRequest{
-			Email: fmt.Sprintf("load-%d@gmail.com"),
+			Email: fmt.Sprintf("load-%d@gmail.com", i),
 			Name:  "testGRPCLoad",
 		})
 		require.NoError(t, err)

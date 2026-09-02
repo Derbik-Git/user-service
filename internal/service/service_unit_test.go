@@ -281,8 +281,9 @@ func TestService_GetUser(t *testing.T) {
 	}
 	for _, tt := range tests {
 		tt := tt
-		t.Run(tt.nameTest, func(*testing.T) {
+		t.Run(tt.nameTest, func(t *testing.T) {
 			t.Parallel()
+
 			svc := NewUserService(tt.repo, tt.cache, tt.broker, slog.Default(), time.Minute)
 			u, err := svc.GetUser(ctx, tt.id)
 

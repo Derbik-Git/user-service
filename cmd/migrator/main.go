@@ -38,11 +38,11 @@ func main() {
 	defer cancel()
 
 	if err := db.PingContext(ctx); err != nil {
-		log.Fatal("ping db: %v", err)
+		log.Fatalf("ping db: %v", err)
 	}
 
 	if err := migrate.MigrateUp(db, migrationsPath); err != nil {
-		log.Fatal("migrate up: %v", err)
+		log.Fatalf("migrate up: %v", err)
 	}
 
 	log.Println("migrations applied successfully")

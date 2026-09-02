@@ -103,7 +103,7 @@ func TestCluster_MOVEDRedirect(t *testing.T) {
 		require.NoError(t, err)
 
 		result, err := env.Client.Get(ctx, key).Result()
-		require.Equal(t, redis.Nil, err) // Аналог require.NoError(t, err)
+		require.NoError(t, err)
 		require.Equal(t, "Bob", result)
 	}
 }
@@ -125,7 +125,7 @@ func TestCluster_MultiKeyRestruction(t *testing.T) {
 
 // {} - вот такие ковычки можно использовать что бы ключи гарантированно были на одной ноде
 // Тут мы будем проверять что мульти операции проходят успешно, если 2 разных ключи находятся на одной ноде(это мы гарантируем за счёт этих ковычек {})
-func TetsCluster_HashTagMultiKey(t *testing.T) {
+func TestCluster_HashTagMultiKey(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -224,7 +224,7 @@ func TestCluster_CrossNodeAccess(t *testing.T) {
 }
 
 func TestCluster_SlotMigration(t *testing.T) {
-	t.Parallel()
+	// УБРАН t.Parallel(): миграция слотов меняет состояние кластера
 
 	ctx := context.Background()
 	key := "migration:test"

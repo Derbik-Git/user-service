@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestProduser_PublishUserEvent(t *testing.T) {
+func TestProducer_PublishUserEvent(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
@@ -27,13 +27,12 @@ func TestProduser_PublishUserEvent(t *testing.T) {
 		Email: "test@example.com",
 		Name:  "Test",
 	}
-	topic := "test-topic"
 
-	err := producer.PublishUserEvent(ctx, domain.TopicUserEvents, topic, user) // мы за счёт поля KafkaWriter, структуры Producer, вызываем подставленный нами мок метод WriteMassage, который не имеет отношения к реальному выполнению задачи return p.kafkaWriter.WriteMessages(ctx, kafka.Message{
+	err := producer.PublishUserEvent(ctx, domain.TopicUserEvents, domain.UserCreated, user) // мы за счёт поля KafkaWriter, структуры Producer, вызываем подставленный нами мок метод WriteMassage, который не имеет отношения к реальному выполнению задачи return p.kafkaWriter.WriteMessages(ctx, kafka.Message{
 	require.NoError(t, err)
 
 	// Достаем из Шпиона коробку и смотрим, правильный ли Топик написал Директор?
-	assert.Equal(t, topic, mockWriter.CapturedMessage.Topic)
+	assert.Equal(t, string(domain.TopicUserEvents), mockWriter.CapturedMessage.Topic)
 
 	expectedKey := []byte(strconv.FormatInt(user.ID, 10))
 	assert.Equal(t, expectedKey, mockWriter.CapturedMessage.Key)
