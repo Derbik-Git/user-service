@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"fmt"
 	"log"
 	"log/slog"
 	"net" // для создания сетевого слушателя (TCP)
@@ -23,6 +24,7 @@ var (
 )
 
 func TestMain(m *testing.M) {
+	fmt.Println(">>> DEBUG: TestMain ЗАПУСТИЛСЯ <<<")
 
 	dsn := os.Getenv("SERVICE_TEST_POSTGRES_DSN")
 	postg, err := postgres.NewStorage(dsn)
@@ -87,6 +89,7 @@ func TestMain(m *testing.M) {
 	}
 
 	client = userv1.NewUserServiceClient(conn) // создаём сам gRPC клиент, за счёт которого будем дёргать методы
+	fmt.Printf(">>> DEBUG: client инициализирован? %v <<<\n", client != nil)
 
 	code := m.Run()
 
