@@ -67,6 +67,11 @@ func (s *Server) GetUser(ctx context.Context, req *userv1.GetUserRequest) (*user
 		return nil, errorsx.ToGRPC(err)
 	}
 
+	// проверка на пустого юзера, что бы программа не падала с паникой
+	if usr == nil {
+		return nil, status.Error(codes.Internal, "internal error: user is nil")
+	}
+
 	return &userv1.GetUserResponse{
 		User: &userv1.User{ // конвертируем структуру User в userv1.User(эта структура пришла из сервиса)
 			Id:        usr.ID,
@@ -94,6 +99,11 @@ func (s *Server) CreateUser(ctx context.Context, req *userv1.CreateUserRequest) 
 	if err != nil {
 		s.logger.Error("CreateUser failed", slog.String("op", op), sl.Err(err))
 		return nil, errorsx.ToGRPC(err)
+	}
+
+	// проверка на пустого юзера, что бы программа не падала с паникой
+	if usr == nil {
+		return nil, status.Error(codes.Internal, "internal error: user is nil")
 	}
 
 	return &userv1.CreateUserResponse{
@@ -131,6 +141,11 @@ func (s *Server) UpdateUser(ctx context.Context, req *userv1.UpdateUserRequest) 
 	if err != nil {
 		s.logger.Warn("UpdateUser failed", slog.String("op", op), sl.Err(err))
 		return nil, errorsx.ToGRPC(err)
+	}
+
+	// проверка на пустого юзера, что бы программа не падала с паникой
+	if usr == nil {
+		return nil, status.Error(codes.Internal, "internal error: user is nil")
 	}
 
 	// Возвращаем ответ protobuf

@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/Derbik-Git/user-service/internal/domain"
-	"github.com/Derbik-Git/user-service/internal/repository/postgres/storage"
+	errorsx "github.com/Derbik-Git/user-service/internal/errors"
 	"github.com/jackc/pgconn"
 )
 
@@ -57,7 +57,7 @@ func (s *Storage) Create(ctx context.Context, email, name string) (*domain.User,
 		//В INSERT / UPDATE мы проверяем PgError, потому что это ошибки бизнес-ограничений БД(например нарушение NOT NULL или нарушение уникальности). Обычно проверка типа: if errors.Is(err, sql.ErrNoRows) тут нету замысловатой логики в самом запросе и ошибка будет наипростейшая, пользователя просто нет, поэтому и такая простая обработка, нежели в сложных запросов, где могут произойти грубые ошибки, требующие более глубокой обработки как при INSERT / UPDATE
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" { // «Если ошибка, произошедшая при выполнении запроса, является ошибкой PostgreSQL и её SQLSTATE-код равен 23505 (нарушение уникальности) то обработай её специальным образом»
-			return nil, fmt.Errorf("%s: %w", op, storage.ErrUserExists)
+			return nil, fmt.Errorf("%s: %w", op, errorsx.ErrAlreadyExists) // Пользователь уже существует
 		}
 
 		return nil, fmt.Errorf("%s: %w", op, err)
@@ -81,7 +81,7 @@ func (s *Storage) GetUserByID(ctx context.Context, id int64) (*domain.User, erro
 	err := s.db.QueryRowContext(ctx, query, id).Scan(&u.ID, &u.Email, &u.Name, &u.CreatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) { // Это не PgError потому что бд не считает это ошибкой (не ошибка PostgreSQL)
-			return nil, nil // нету пользователя ≠ ошибка, поэтому nil, nil (ни пользователя, ни ошибки)
+			return nil, fmt.Errorf("%s: %w", op, errorsx.ErrNotFound)
 		}
 
 		return nil, fmt.Errorf("%s: %w", op, err)
@@ -106,11 +106,11 @@ func (s *Storage) Update(ctx context.Context, user *domain.User) (*domain.User, 
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			return nil, fmt.Errorf("%s: %w", op, storage.ErrUserExists) // Пользователь уже существует
+			return nil, fmt.Errorf("%s: %w", op, errorsx.ErrAlreadyExists) // Пользователь уже существует
 		}
 
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("%s: %w", op, storage.ErrNotFound) // Пользователь не найден
+			return nil, fmt.Errorf("%s: %w", op, errorsx.ErrNotFound) // Пользователь не найден
 		}
 
 		return nil, fmt.Errorf("%s: %w", op, err)
@@ -138,7 +138,7 @@ func (s *Storage) Delete(ctx context.Context, id int64) error {
 	}
 
 	if affected == 0 { // если затронуто 0 строк, это значит что удалено 0 строк, это обозначает что пользователь не найден
-		return fmt.Errorf("%s: %w", op, storage.ErrNotFound) // Пользователь не найден
+		return fmt.Errorf("%s: %w", op, errorsx.ErrNotFound) // Пользователь не найден
 	}
 
 	return nil

@@ -27,9 +27,15 @@ func TestMain(m *testing.M) {
 	fmt.Println(">>> DEBUG: TestMain ЗАПУСТИЛСЯ <<<")
 
 	dsn := os.Getenv("SERVICE_TEST_POSTGRES_DSN")
+	if dsn == "" {
+		// Подстраховка: дефолтный DSN для локального Docker
+		dsn = "postgres://users_db:users_db@localhost:5432/users_db?sslmode=disable"
+	}
+
 	postg, err := postgres.NewStorage(dsn)
 	if err != nil {
-		log.Fatal("SERVICE_TEST_POSTGRES_DSN not set")
+		// Выводим РЕАЛЬНУЮ ошибку подключения %v
+		log.Fatalf("failed to connect to postgres (dsn=%s): %v", dsn, err)
 	}
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
