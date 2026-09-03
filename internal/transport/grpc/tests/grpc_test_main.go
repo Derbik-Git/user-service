@@ -1,4 +1,4 @@
-package grpcTest
+package tests
 
 import (
 	"log"
@@ -32,7 +32,7 @@ func TestMain(m *testing.M) {
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
-	cache, err := cache.NewRedisCache([]string{"localhost:5566"}, 3*time.Second, nil, logger)
+	cache, err := cache.NewRedisCache([]string{"localhost:6379"}, 3*time.Second, nil, logger)
 	if err != nil {
 		log.Fatal(err)
 	}

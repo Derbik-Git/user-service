@@ -1,4 +1,4 @@
-package grpcTest
+package tests
 
 import (
 	"context"
