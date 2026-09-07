@@ -157,7 +157,7 @@ func TestGRPC_Concurrent(t *testing.T) {
 			defer wg.Done()
 
 			_, err := client.CreateUser(ctx, &userv1.CreateUserRequest{
-				Email: fmt.Sprintf("concurent-%d@gmail.com", i),
+				Email: fmt.Sprintf("concurent-%d-%d@gmail.com", i, time.Now().UnixNano()),
 				Name:  fmt.Sprintf("testGRPCConcurent%d", i),
 			})
 
@@ -198,8 +198,8 @@ func TestGRPC_Load(t *testing.T) {
 
 	for i := 1; i <= 200; i++ {
 		_, err := client.CreateUser(ctx, &userv1.CreateUserRequest{
-			Email: fmt.Sprintf("load-%d@gmail.com", i),
-			Name:  "testGRPCLoad",
+			Email: fmt.Sprintf("load-%d-%d@gmail.com", i, time.Now().UnixNano()),
+			Name:  fmt.Sprintf("testGRPCLoad%d", i),
 		})
 		require.NoError(t, err)
 	}

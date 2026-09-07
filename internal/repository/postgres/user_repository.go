@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/lib/pq"
+
 	"github.com/Derbik-Git/user-service/internal/domain"
 	errorsx "github.com/Derbik-Git/user-service/internal/errors"
 	"github.com/jackc/pgconn"
@@ -54,9 +56,9 @@ func (s *Storage) Create(ctx context.Context, email, name string) (*domain.User,
 
 	err := s.db.QueryRowContext(ctx, query, email, name).Scan(&u.ID, &u.CreatedAt) // при помощи помощи Scan достаём переменные из строки результата SQL запроса и записываем в указанные пееменные.
 	if err != nil {
-		//В INSERT / UPDATE мы проверяем PgError, потому что это ошибки бизнес-ограничений БД(например нарушение NOT NULL или нарушение уникальности). Обычно проверка типа: if errors.Is(err, sql.ErrNoRows) тут нету замысловатой логики в самом запросе и ошибка будет наипростейшая, пользователя просто нет, поэтому и такая простая обработка, нежели в сложных запросов, где могут произойти грубые ошибки, требующие более глубокой обработки как при INSERT / UPDATE
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" { // «Если ошибка, произошедшая при выполнении запроса, является ошибкой PostgreSQL и её SQLSTATE-код равен 23505 (нарушение уникальности) то обработай её специальным образом»
+		//В INSERT / UPDATE мы проверяем PqError, потому что это ошибки бизнес-ограничений БД(например нарушение NOT NULL или нарушение уникальности). Обычно проверка типа: if errors.Is(err, sql.ErrNoRows) тут нету замысловатой логики в самом запросе и ошибка будет наипростейшая, пользователя просто нет, поэтому и такая простая обработка, нежели в сложных запросов, где могут произойти грубые ошибки, требующие более глубокой обработки как при INSERT / UPDATE
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) && pqErr.Code == "23505" { // «Если ошибка, произошедшая при выполнении запроса, является ошибкой PostgreSQL и её SQLSTATE-код равен 23505 (нарушение уникальности) то обработай её специальным образом»
 			return nil, fmt.Errorf("%s: %w", op, errorsx.ErrAlreadyExists) // Пользователь уже существует
 		}
 

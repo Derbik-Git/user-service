@@ -173,10 +173,10 @@ func TestMain(m *testing.M) {
 	}
 
 	testKafkaBrokers := os.Getenv(testKafkaBrokersEnv)
-	testBrokers := []string{}
-	if testKafkaBrokers != "" {
-		testBrokers = []string{testKafkaBrokers}
+	if testKafkaBrokers == "" {
+		log.Fatalf("%s not set. You must provide a Kafka broker address for integration tests.", testKafkaBrokersEnv)
 	}
+	testBrokers := []string{testKafkaBrokers}
 
 	if err := waitForKafka(testBrokers); err != nil {
 		log.Fatal(err)
