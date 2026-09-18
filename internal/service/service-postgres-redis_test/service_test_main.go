@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -171,12 +172,13 @@ func TestMain(m *testing.M) {
 	if redisAddr == "" {
 		log.Fatalf("%s not set", testRedisAddrEnv)
 	}
+	redisAddrs := strings.Split(redisAddr, ",")
 
 	testKafkaBrokers := os.Getenv(testKafkaBrokersEnv)
 	if testKafkaBrokers == "" {
 		log.Fatalf("%s not set. You must provide a Kafka broker address for integration tests.", testKafkaBrokersEnv)
 	}
-	testBrokers := []string{testKafkaBrokers}
+	testBrokers := strings.Split(testKafkaBrokers, ",")
 
 	if err := waitForKafka(testBrokers); err != nil {
 		log.Fatal(err)
@@ -193,7 +195,7 @@ func TestMain(m *testing.M) {
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
-	cache, err := cache.NewRedisCache([]string{redisAddr}, 5*time.Second, nil, logger)
+	cache, err := cache.NewRedisCache(redisAddrs, 5*time.Second, nil, logger)
 	if err != nil {
 		log.Fatal(err)
 	}

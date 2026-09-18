@@ -9,7 +9,6 @@ import (
 	"github.com/Derbik-Git/user-service/internal/domain"
 	errorsx "github.com/Derbik-Git/user-service/internal/errors"
 	"github.com/Derbik-Git/user-service/internal/sl"
-	"github.com/google/uuid"
 )
 
 type UserRepository interface {
@@ -61,19 +60,12 @@ func (s *Service) CreateUser(ctx context.Context, email, name string) (*domain.U
 		return nil, err
 	}
 
-	event := &domain.UserEvent{
-		ID:        uuid.New().String(),
-		Type:      domain.UserCreated,
-		Payload:   *u,
-		CreatedAt: time.Now(),
-	}
-
 	if s.broker != nil {
 		err = s.broker.PublishUserEvent(ctx, domain.TopicUserEvents, domain.UserCreated, u)
 		if err != nil {
 			s.log.Error(op, slog.String("msg", "failed to publish to kafka"), sl.Err(err))
 		} else {
-			s.log.Info(op, slog.String("msg", "kafka event published"), slog.String("ivent_id", event.ID))
+			s.log.Info(op, slog.String("msg", "kafka event published"), slog.Int64("event_id", u.ID))
 		}
 	}
 
@@ -138,8 +130,10 @@ func (s *Service) UpdateUser(ctx context.Context, u *domain.User) (*domain.User,
 
 	if s.cache != nil {
 		if err := s.cache.SetUser(ctx, updated, s.ttl); err != nil {
-			s.log.Warn(op, sl.Err(err))
-			return nil, err
+			s.log.Error("failed to update cache, attempting to delete stale data", slog.String("op", op), sl.Err(err)) // нельзя завершать работу приложения из за падения кеша, поэтому просто логируем
+			// Пытаемся удалить ключ, чтобы при следующем GetUser приложение сходило в БД
+			_ = s.cache.DeleteUser(ctx, updated.ID) // если кеш не подянялся, соответственно в кеше не удастся изменить данные, а в постгрес они изменились, поэтому нам и надо удалить ключь в кеше, что бы что бы у нас небыло такого, что в постгрес данные изменённые, а в кеше не изменённые
+			// НЮАНС: всё же если редис упал, удаление может не сработать, в этом случае данные удаляться, как только TTL ключа кеша истечёт рассинхрона между данными не будет
 		}
 	}
 

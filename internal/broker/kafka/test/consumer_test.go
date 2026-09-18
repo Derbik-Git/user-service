@@ -65,7 +65,7 @@ func TestConsumer_ProcessRowMassage_InvalidJSON(t *testing.T) {
 	}
 
 	err := consumer.ProcessRawMessage(ctx, badJSON)
-	require.NoError(t, err)
+	require.Error(t, err)
 
 	assert.False(t, mockHandler.IsCalled)
 }
@@ -88,7 +88,7 @@ func TestConsumer_ProccessRawMessage_HandlerError(t *testing.T) {
 	}
 
 	err := consumer.ProcessRawMessage(ctx, validJSON)
-	require.NoError(t, err)
+	require.Error(t, err)
 
 	require.ErrorIs(t, err, expectedError)
 }

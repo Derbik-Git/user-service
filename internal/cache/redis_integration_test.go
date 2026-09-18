@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -29,6 +30,12 @@ func newTestCache(t *testing.T) *RedisCache {
 	return cache
 }
 
+var idSec int64 = 100
+
+func getNextTestID() int64 {
+	return atomic.AddInt64(&idSec, 1)
+}
+
 func newUniqueUser(idUniqueRedisKey int64) *domain.User { // этот метод с уникальным пользователем(добавлено из за t.Parallel() в тесте) для того, что бы при параллельном выполнении тестов, каждый тест работал со своей структурой пользователя, а не с общей, так как если будет общая структура, то тесты будут мешать друг другу и могут падать, например если один тест удалит пользователя, а другой тест будет пытаться его достать, то он упадёт, так как пользователь уже удалён, а так как мы добавляем суффикс к email, то каждый тест будет работать со своим пользователем и не будет мешать другим тестам
 	return &domain.User{
 		ID:        idUniqueRedisKey,
@@ -43,7 +50,7 @@ func TestRedis_SetAndGetUser(t *testing.T) {
 	cache := newTestCache(t)
 	ctx := context.Background()
 
-	user := newUniqueUser(1)
+	user := newUniqueUser(getNextTestID())
 
 	err := cache.SetUser(ctx, user, 0) // ttl = 0, берётся из RedisCache.ttl (а как от туда берётся и что это, смотри логику SetUser в логике кеша) В КРАТЦЕ в логике прописано if ttl <= 0 {tt = c.ttl}, где с - это структура RedisCache, а мы функцией NewRedisCache заполняем эту структуру, например как мы в методе выше передали этому значению 3 секунды, а точнее 3*time.Second
 	require.NoError(t, err)
@@ -59,7 +66,7 @@ func TestRedis_DeleteUser(t *testing.T) {
 	cache := newTestCache(t)
 	ctx := context.Background()
 
-	user := newUniqueUser(2)
+	user := newUniqueUser(getNextTestID())
 
 	require.NoError(t, cache.SetUser(ctx, user, 0))
 	require.NoError(t, cache.DeleteUser(ctx, user.ID))
@@ -75,7 +82,7 @@ func TestRedis_TTL(t *testing.T) {
 	cache := newTestCache(t)
 	ctx := context.Background()
 
-	user := newUniqueUser(3)
+	user := newUniqueUser(getNextTestID())
 
 	require.NoError(t, cache.SetUser(ctx, user, 2*time.Second))
 
@@ -92,7 +99,7 @@ func TestRedis_Overwrite(t *testing.T) {
 	cache := newTestCache(t)
 	ctx := context.Background()
 
-	user := newUniqueUser(4)
+	user := newUniqueUser(getNextTestID())
 
 	require.NoError(t, cache.SetUser(ctx, user, 0))
 
@@ -129,11 +136,11 @@ func TestRedis_Concurency(t *testing.T) {
 		go func(id int64) {
 			defer wg.Done()
 
-			user := newUniqueUser(int64(i))
+			user := newUniqueUser(id)
 			require.NoError(t, cache.SetUser(ctx, user, 0))
 
 			_, err := cache.GetUser(ctx, user.ID)
-			require.NoError(t, err)
+			assert.NoError(t, err)
 		}(int64(i))
 	}
 
@@ -158,8 +165,8 @@ func TestRedis_GetNonKeyRedis(t *testing.T) { // пытаемся достать
 	ctx := context.Background()
 
 	_, err := cache.GetUser(ctx, 7777777)
-	require.NoError(t, err)
-	assert.Contains(t, err, "redis GET failed")
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "redis GET failed")
 }
 
 // set с nil не делаем, потому что этого не допускает логика слоя cache

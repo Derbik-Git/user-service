@@ -27,11 +27,16 @@ import (
 ✔ network issues
 */
 
+// вспомогательная функция контекст
+func testCtx(t *testing.T) context.Context {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	t.Cleanup(cancel)
+	return ctx
+}
+
 // проверяем что кластер находится в состоянии OK
 func TestCluster_StateOK(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
+	ctx := testCtx(t)
 
 	info, err := env.Client.ClusterInfo(ctx).Result() //достаём инфо о клстере
 	require.NoError(t, err)                           // проверяем что всё хорошо и клстер не вернул ошибку
@@ -41,9 +46,7 @@ func TestCluster_StateOK(t *testing.T) {
 
 // Проверяем на большое ли количество слотов из 16384 распределяются ключи | если 1000 ключей распределятся всего лишь на 5 слотов, это может отрицательно сказатся на работоспособности redis cluster, но если к примеру 1000 ключей распределились более чем по 1000 слотам, то всё хорошо(НАГРУЗКА РАСПРЕДЕЛЯЕТСЯ КОРРЕКТНО) | 1 ключь != 1 слот
 func TestCluster_RealSlotDistribution(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
+	ctx := testCtx(t)
 
 	slots := make(map[int]bool) // !!! здесь [int] - это будет именно номер слота redis, потому что ClusterKeySlot возвращает номер слота, мы будем в эту мапу класть все номера слотов и потом будем смотреть в какую длинну вышла мапа что бы посчитать достаточно ли redis задействовал слотов для распределения нагрузки по слотам
 
@@ -91,33 +94,29 @@ func TestCluster_RealSlotDistribution(t *testing.T) {
 */
 // В самом кратце, если redis не перераспределяет нормально ключи между нодами, то просто тест завершится с ошибкой так как он вызвав метод get не увидит ключа в просматриваемой ноде, не сможет достать из другой и выдаст ошибку(вот это проблему связи между нодами мы и проверяем)
 func TestCluster_MOVEDRedirect(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
+	ctx := testCtx(t)
 
 	for i := 1; i <= 50; i++ {
 
-		key := "user:1"
+		key := fmt.Sprintf("%s:user:1", t.Name())
 
-		_, err := env.Client.Set(ctx, key, "Bob", 0).Result()
+		_, err := env.Client.Set(ctx, key, "Bob"+t.Name(), 0).Result()
 		require.NoError(t, err)
 
 		result, err := env.Client.Get(ctx, key).Result()
 		require.NoError(t, err)
-		require.Equal(t, "Bob", result)
+		require.Equal(t, "Bob"+t.Name(), result)
 	}
 }
 
 // В Redis есть команды, которые работают сразу с несколькими ключами, и нам нужно следить что бы redis не мог работать сразу с двумя разными ключами из разных нод и возвращал ошибку CROSSSLOT, потому что если ты например решил удалить 2 ключа, указываешь ключь user:1 и ключь user:2(из за сильно отличающегося окончания очень вероятно что они будут в разных слотах), redis захватит ноду с первым ключом, начнёт выполнять операцию, а доступа ко второму ключу нету(функция не выполняет поставленную задачу удалить 2 ключа), так как он находится на другой ноде и redis вернёт ошибку CROSSSLOT, !!! логикой redis подрузомевается выдавать такую ошибку, потому что если бы было возможно выполнять операции с мульти ключами из разных нод, это значительно бы замедляла работу redis, поэтому мы наоборот следим что бы redis возвращал данную ошибку | опять же говорю что можно сделать так что бы redis работал с мульти ключами на разных нодах, но это будет серьёзно влиять на производительность, как это вообще осуществить, можно спросить у нейросети, но такая практика не пользуется спросом, во первых из за производительности, во вторых в настоящих проектах нету задач, где такая практика нужна была бы, иначе можно было удалять 2 ключа одновременно с помощью postgres
 // с MultiSet это работает так, что захватывается нода куда будет создаваться первый ключь, а так как ококначания сильно отличаются, второй ключь должен попасть в другой слот, а к нему доступа быть не должно, поэтому ожидаем ошибку
 func TestCluster_MultiKeyRestruction(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
+	ctx := testCtx(t)
 
 	err := env.Client.MSet(ctx,
-		"user:1", "Ivan",
-		"user:2", "Maksim",
+		fmt.Sprintf("%s:user:1", t.Name()), "Ivan",
+		fmt.Sprintf("%s:user:2", t.Name()), "Maksim",
 	).Err()
 
 	require.Error(t, err) // ещё раз повторю, ожидаем ошибку потому что redis не может выполнять запросы с мульти ключами из разных нод так как нету доступа к другой ноде, если действия совершаются с одной нодой. Redis может выполнять опрации одновременно только с одной нодой, если бы redis мог работать с двумя нодами одновременно(что можно сделать), то от этого сильно бы упала производительность, что теряет смысл основоного приемущества redis(скорости)
@@ -126,9 +125,7 @@ func TestCluster_MultiKeyRestruction(t *testing.T) {
 // {} - вот такие ковычки можно использовать что бы ключи гарантированно были на одной ноде
 // Тут мы будем проверять что мульти операции проходят успешно, если 2 разных ключи находятся на одной ноде(это мы гарантируем за счёт этих ковычек {})
 func TestCluster_HashTagMultiKey(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
+	ctx := testCtx(t)
 
 	err := env.Client.MSet(ctx,
 		"user:{1}:name", "Bob",
@@ -141,9 +138,7 @@ func TestCluster_HashTagMultiKey(t *testing.T) {
 // Проверяем парралельные записи(нагрузка)
 // Тестируем concurrency и Thread safety клиента
 func TestCluster_ParallelWrites(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
+	ctx := testCtx(t)
 
 	var wg sync.WaitGroup
 
@@ -167,9 +162,7 @@ func TestCluster_ParallelWrites(t *testing.T) {
 
 // !! проверяет, что ключи распределяются по разным(нодам) узлам кластера равномерно, а не попадают все в один «узкий» слот.
 func TestCluster_NodeDistribution(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
+	ctx := testCtx(t)
 
 	nodeHits := make(map[string]int) // это словарь, где ключом будет адрес узла (например, 127.0.0.1:7000), а значением — количество ключей, которые попали на этот узел.
 
@@ -204,12 +197,10 @@ func TestCluster_NodeDistribution(t *testing.T) {
 // Записываем переменные на разные узлы кластера(ноды), за счёт отличных окончаний ключей друг от друга, переменные записываются в разные слоты.
 // Тем самым, за счёт создания и получения пользователей мы проверяем работоспособность каждой ноды и нормально ли вообще мы достаём ключи с разных нод
 func TestCluster_CrossNodeAccess(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
+	ctx := testCtx(t)
 
 	keys := []string{
-		"user:1", "user:2", "user:3", "user:1000",
+		fmt.Sprintf("%s:user:1", t.Name()), fmt.Sprintf("%s:user:2", t.Name()), fmt.Sprintf("%s:user:3", t.Name()), fmt.Sprintf("%s:user:1000", t.Name()),
 	}
 
 	for _, k := range keys {
@@ -224,9 +215,8 @@ func TestCluster_CrossNodeAccess(t *testing.T) {
 }
 
 func TestCluster_SlotMigration(t *testing.T) {
-	// УБРАН t.Parallel(): миграция слотов меняет состояние кластера
+	ctx := testCtx(t)
 
-	ctx := context.Background()
 	key := "migration:test"
 
 	require.NoError(t, env.Client.Set(ctx, key, "value", 0).Err())
@@ -275,10 +265,8 @@ func TestCluster_SlotMigration(t *testing.T) {
 В кластере Redis при большом количестве операций записи может запускаться процесс перераспределения слотов (ребалансировка).
   - Тест проверяет, что кластер продолжает корректно работать и принимать запросы во время этого процесса.
 */
-func TestCluster_RebalancStability(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
+func TestCluster_BulkRecordBack(t *testing.T) {
+	ctx := testCtx(t)
 
 	for i := 1; i <= 200; i++ {
 		key := fmt.Sprintf("rebalanc:%d", i)
@@ -289,9 +277,7 @@ func TestCluster_RebalancStability(t *testing.T) {
 
 // Этот тест предназначен для проверки корректной работы кластера Redis с так называемым «горячим ключом» — то есть ключом, к которому одновременно обращается большое количество запросов.
 func TestCluster_HotKey(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
+	ctx := testCtx(t)
 
 	hotKey := "hot:Key"
 
@@ -316,19 +302,17 @@ func TestCluster_HotKey(t *testing.T) {
 
 // Этот тест проверяет не только благополучное завершение по таймауту, но и корректную обработку сетевых таймаутов самим клиентом Redis.
 func TestCluster_NetworkTimeout(t *testing.T) {
-	t.Parallel()
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
 	defer cancel()
+
+	time.Sleep(1 * time.Millisecond) // гарант того, что таймаут наступит, до завершеия теста
 
 	err := env.Client.Set(ctx, "net:test", "valNetTest", 0).Err()
 	require.Error(t, err)
 }
 
 func TestCluster_NodesInfo(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
+	ctx := testCtx(t)
 
 	nodes, err := env.Client.ClusterNodes(ctx).Result() // достаёт информацию о нодах нашего кластера
 	require.NoError(t, err)
@@ -339,9 +323,7 @@ func TestCluster_NodesInfo(t *testing.T) {
 
 // Проверяем столько ли у нас мастеров, сколько мы запустили на самом деле.
 func TestCluster_SlotsInfo(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
+	ctx := testCtx(t)
 
 	slots, err := env.Client.ClusterSlots(ctx).Result() // этот метод возвращет массив, длинной в количество мастеров, реплики этому массиву длинны не прибаляют
 	require.NoError(t, err)
@@ -351,9 +333,7 @@ func TestCluster_SlotsInfo(t *testing.T) {
 
 // !!!! ВАЖНАЯ ПРОВЕРКА FAILOWER // что будет в случае падения контейнера, как отработает реплика
 func TestCluster_Failover_Auto(t *testing.T) {
-	// t.Parallel() нельзя запускать этот тест паралелльно, иначе несколько тестов начнут убивать ноды одновременно
-
-	ctx := context.Background()
+	ctx := testCtx(t)
 
 	key := "failover:auto"
 
@@ -392,37 +372,47 @@ func TestCluster_Failover_Auto(t *testing.T) {
 	// 5. Убиваем контейнер
 	require.NoError(t, dockerStop(container))
 
-	//  Даем время на election
-	time.Sleep(10 * time.Second)
+	// Это замена обычному time.Sleep, это нужно для того, что бы тест не зависал просто так на 15 секунд, потому чтот если нода поднялась за 4 секунды, то мы теряем 11 секунд просто так
+	// этот метод внутри себя запускает переданную ему функцию и крутит её циулом (в нашем случае) 15 секунд и проводит опрос (	if err == nil && val == "value" ) каждые 500 миллисекунд
+	// Даем кластеру до 15 секунд на перестроение, проверяя каждые 500 миллисекунд
+	require.Eventually(t, func() bool {
+		val, err := env.Client.Get(ctx, key).Result()
+		return err == nil && val == "value"
+	}, 15*time.Second, 500*time.Millisecond, "Кластер не смог восстановиться после падения мастера")
 
-	// 6. Проверяем что данные доступны
-	val, err := env.Client.Get(ctx, key).Result()
-
-	require.NoError(t, err)
-	require.Equal(t, "value", val)
-
-	// 7. Поднимаем контейнер обратно (очень важно!)
 	require.NoError(t, dockerStart(container))
+
+	// ожидаем и так же проверяем, когда новая нода войдёт в строй
+	require.Eventually(t, func() bool {
+		info, _ := env.Client.ClusterInfo(ctx).Result()
+		return strings.Contains(info, "cluster_state:ok")
+	}, 10*time.Second, 500*time.Millisecond, "Кластер не смог восстановиться после падения мастера")
+
 }
 
 // вспомогательные функции
 func mapAddrToContainer(addr string) string {
-	switch addr {
-	case "localhost:7001":
-		return "redis-node-1"
-	case "localhost:7002":
-		return "redis-node-2"
-	case "localhost:7003":
-		return "redis-node-3"
-	case "localhost:7004":
-		return "redis-node-4"
-	case "localhost:7005":
-		return "redis-node-5"
-	case "localhost:7006":
-		return "redis-node-6"
-	default:
-		return ""
+	// Самый надежный способ - определять контейнер по порту,
+	// так как порты уникально привязаны к контейнерам (7001 = redis-1 и т.д.)
+	if strings.Contains(addr, "7001") {
+		return "redis-1"
 	}
+	if strings.Contains(addr, "7002") {
+		return "redis-2"
+	}
+	if strings.Contains(addr, "7003") {
+		return "redis-3"
+	}
+	if strings.Contains(addr, "7004") {
+		return "redis-4"
+	}
+	if strings.Contains(addr, "7005") {
+		return "redis-5"
+	}
+	if strings.Contains(addr, "7006") {
+		return "redis-6"
+	}
+	return ""
 }
 
 func dockerStop(container string) error {

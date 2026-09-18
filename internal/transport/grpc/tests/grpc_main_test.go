@@ -26,10 +26,10 @@ var (
 func TestMain(m *testing.M) {
 	fmt.Println(">>> DEBUG: TestMain ЗАПУСТИЛСЯ <<<")
 
-	dsn := os.Getenv("SERVICE_TEST_POSTGRES_DSN")
+	dsn := os.Getenv("POSTGRES_DSN")
 	if dsn == "" {
 		// Подстраховка: дефолтный DSN для локального Docker
-		dsn = "postgres://users_db:users_db@localhost:5432/users_db?sslmode=disable"
+		dsn = "postgres://users_db:users_db@localhost:5433/users_db?sslmode=disable"
 	}
 
 	postg, err := postgres.NewStorage(dsn)

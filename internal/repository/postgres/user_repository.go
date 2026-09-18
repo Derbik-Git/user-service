@@ -11,7 +11,6 @@ import (
 
 	"github.com/Derbik-Git/user-service/internal/domain"
 	errorsx "github.com/Derbik-Git/user-service/internal/errors"
-	"github.com/jackc/pgconn"
 )
 
 type Storage struct {
@@ -106,8 +105,8 @@ func (s *Storage) Update(ctx context.Context, user *domain.User) (*domain.User, 
 
 	err := s.db.QueryRowContext(ctx, query, user.Email, user.Name, user.ID).Scan(&update.ID, &update.Email, &update.Name, &update.CreatedAt) // Входные данные ≠ результат операции (ЭТО ВАЖНО, это я говорю к тому что если мы начали бы передавать в Scan входящие значения функции как в прошлых методах репозитория, Postgres начал бы добавлять результат sql запроса в не пустые поля структуры, а с какими то значениями, так как для метода Update передавалась заполненнная структура, а для корректного заполнения нам нужна пустая структура, что бы структура не заполнилась некорректными данными входящие параметры для запуска SQL запроса + его результат, это не корректно!!!! И выведет не тот результат SQL запроса, которйм мы ожидали получить, а будут некорректные данные и путаница!!!! Поэтому нужно создавать пустую структуру для записис SQL результата)
 	if err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
 			return nil, fmt.Errorf("%s: %w", op, errorsx.ErrAlreadyExists) // Пользователь уже существует
 		}
 

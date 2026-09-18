@@ -124,7 +124,7 @@ func (s *Server) UpdateUser(ctx context.Context, req *userv1.UpdateUserRequest) 
 		s.logger.Warn("invalid request: id must be > 0", slog.String("op", op))
 		return nil, status.Error(codes.InvalidArgument, "id must be > 0")
 	}
-	if req.GetEmail() == "" && req.GetName() == "" {
+	if req.GetEmail() == "" || req.GetName() == "" {
 		s.logger.Warn("invalid request: nothing to update", slog.String("op", op))
 		return nil, status.Error(codes.InvalidArgument, "nothing to update")
 	}

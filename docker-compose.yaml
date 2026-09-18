@@ -4,7 +4,7 @@ networks:
 
 services:
   # ==========================================
-  # 1.  СЕРВИС
+  # 1. СЕРВИС
   # ==========================================
   user-service:
     build:
@@ -17,8 +17,7 @@ services:
     environment:
       - GRPC_PORT=50051
       - POSTGRES_DSN=postgres://users_db:users_db@postgres:5432/users_db?sslmode=disable
-      - REDIS_ADDRS=redis:6379
-      # Передаем адреса всех трех брокеров!
+      - REDIS_ADDRS=redis-1:7001,redis-2:7002,redis-3:7003
       - KAFKA_BROKERS=kafka-1:9092,kafka-2:9092,kafka-3:9092
       - CACHE_TTL=5m
     networks:
@@ -26,11 +25,22 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
+      migrator:
+        condition: service_completed_successfully
+      redis-1:
         condition: service_healthy
+      redis-2:
+        condition: service_healthy
+      redis-3:
+        condition: service_healthy
+      redis-cluster-init:
+        condition: service_completed_successfully
       kafka-1:
         condition: service_started
-
+      kafka-2:
+        condition: service_started
+      kafka-3:
+        condition: service_started
 
   # ==========================================
   # 2. БАЗЫ ДАННЫХ И КЭШ
@@ -43,7 +53,7 @@ services:
       POSTGRES_PASSWORD: users_db
       POSTGRES_DB: users_db
     ports:
-      - "5432:5432"
+      - "5433:5432"
     networks:
       - app-network
     healthcheck:
@@ -52,21 +62,161 @@ services:
       timeout: 5s
       retries: 5
 
-  redis:
+  # ==========================================
+  # REDIS CLUSTER (3 Мастера)
+  # ==========================================
+  redis-1:
     image: redis:7.2-alpine
-    container_name: user-service-redis
+    container_name: redis-1
     ports:
-      - "6379:6379"
+      - "7001:7001"
+      - "17001:17001"
     command: >
-      redis-server
-      --appendonly yes
+      redis-server --port 7001 --cluster-enabled yes 
+      --cluster-config-file nodes.conf --cluster-node-timeout 5000 
+      --appendonly yes 
+      --cluster-announce-hostname redis-1 
+      --cluster-preferred-endpoint-type hostname
+      --cluster-announce-port 7001 --cluster-announce-bus-port 17001
     networks:
       - app-network
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
+      test: ["CMD", "redis-cli", "-p", "7001", "ping"]
+      interval: 3s
       timeout: 3s
       retries: 5
+
+  redis-2:
+    image: redis:7.2-alpine
+    container_name: redis-2
+    ports:
+      - "7002:7002"
+      - "17002:17002"
+    command: >
+      redis-server --port 7002 --cluster-enabled yes 
+      --cluster-config-file nodes.conf --cluster-node-timeout 5000 
+      --appendonly yes 
+      --cluster-announce-hostname redis-2 
+      --cluster-preferred-endpoint-type hostname
+      --cluster-announce-port 7002 --cluster-announce-bus-port 17002
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "7002", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 5
+
+  redis-3:
+    image: redis:7.2-alpine
+    container_name: redis-3
+    ports:
+      - "7003:7003"
+      - "17003:17003"
+    command: >
+      redis-server --port 7003 --cluster-enabled yes 
+      --cluster-config-file nodes.conf --cluster-node-timeout 5000 
+      --appendonly yes 
+      --cluster-announce-hostname redis-3 
+      --cluster-preferred-endpoint-type hostname
+      --cluster-announce-port 7003 --cluster-announce-bus-port 17003
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "7003", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 5
+
+  redis-4:
+    image: redis:7.2-alpine
+    container_name: redis-4
+    ports:
+      - "7004:7004"
+      - "17004:17004"
+    command: >
+      redis-server --port 7004 --cluster-enabled yes 
+      --cluster-config-file nodes.conf --cluster-node-timeout 5000 
+      --appendonly yes 
+      --cluster-announce-hostname redis-4 
+      --cluster-preferred-endpoint-type hostname
+      --cluster-announce-port 7004 --cluster-announce-bus-port 17004
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "7004", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 5
+
+  redis-5:
+    image: redis:7.2-alpine
+    container_name: redis-5
+    ports:
+      - "7005:7005"
+      - "17005:17005"
+    command: >
+      redis-server --port 7005 --cluster-enabled yes 
+      --cluster-config-file nodes.conf --cluster-node-timeout 5000 
+      --appendonly yes 
+      --cluster-announce-hostname redis-5 
+      --cluster-preferred-endpoint-type hostname
+      --cluster-announce-port 7005 --cluster-announce-bus-port 17005
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "7005", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 5
+
+  redis-6:
+    image: redis:7.2-alpine
+    container_name: redis-6
+    ports:
+      - "7006:7006"
+      - "17006:17006"
+    command: >
+      redis-server --port 7006 --cluster-enabled yes 
+      --cluster-config-file nodes.conf --cluster-node-timeout 5000 
+      --appendonly yes 
+      --cluster-announce-hostname redis-6 
+      --cluster-preferred-endpoint-type hostname
+      --cluster-announce-port 7006 --cluster-announce-bus-port 17006
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "7006", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 5
+
+  # Инициализатор кластера Redis
+  redis-cluster-init:
+    image: redis:7.2-alpine
+    container_name: redis-cluster-init
+    depends_on:
+      redis-1:
+        condition: service_healthy
+      redis-2:
+        condition: service_healthy
+      redis-3:
+        condition: service_healthy
+      redis-4:
+        condition: service_healthy
+      redis-5:
+        condition: service_healthy
+      redis-6:
+        condition: service_healthy
+    networks:
+      - app-network
+    command: >
+      sh -c "
+        echo 'Ждем запуск узлов Redis...'
+        sleep 2
+        redis-cli --cluster create redis-1:7001 redis-2:7002 redis-3:7003 redis-4:7004 redis-5:7005 redis-6:7006 --cluster-replicas 1 --cluster-yes
+        echo 'Redis Cluster создан!'
+      "
 
   # ==========================================
   # 3. KAFKA CLUSTER (KRaft - 3 Брокера)
@@ -85,7 +235,7 @@ services:
       KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka-1:9092,PLAINTEXT_HOST://localhost:9091'
       KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
       KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
-      CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'
+      KAFKA_CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
     networks:
       - app-network
@@ -94,7 +244,7 @@ services:
     image: confluentinc/cp-kafka:7.5.0
     container_name: kafka-2
     ports:
-      - "9092:9092"
+      - "9092:9094"
     environment:
       KAFKA_NODE_ID: 2
       KAFKA_PROCESS_ROLES: 'broker,controller'
@@ -104,7 +254,7 @@ services:
       KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka-2:9092,PLAINTEXT_HOST://localhost:9092'
       KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
       KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
-      CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'
+      KAFKA_CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
     networks:
       - app-network
@@ -123,10 +273,30 @@ services:
       KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka-3:9092,PLAINTEXT_HOST://localhost:9093'
       KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
       KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
-      CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'
+      KAFKA_CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
     networks:
       - app-network
+
+  # Инициализатор топиков Kafka
+  init-kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: init-kafka
+    depends_on:
+      - kafka-1
+      - kafka-2
+      - kafka-3
+    networks:
+      - app-network
+    entrypoint: [ '/bin/sh', '-c' ]
+    command: >
+      "
+      echo 'Ждем 10 секунд пока поднимется кластер Kafka...'
+      sleep 10
+      echo 'Создаем топик user-events...'
+      kafka-topics --bootstrap-server kafka-1:9092 --create --if-not-exists --topic user-events --partitions 3 --replication-factor 3
+      echo 'Готово! Топик создан.'
+      "
 
   # ==========================================
   # 4. МОНИТОРИНГ
@@ -157,7 +327,7 @@ services:
       - prometheus
 
   # ==========================================
-  # 5. Мигратор
+  # 5. МИГРАТОР
   # ==========================================
   migrator:
     build: .
