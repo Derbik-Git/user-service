@@ -20,7 +20,12 @@ func newTestCache(t *testing.T) *RedisCache {
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
-	cache, err := NewRedisCache([]string{"localhost:6379"}, 3*time.Second, nil, logger)
+	addrs := []string{
+		"localhost:7001", "localhost:7002", "localhost:7003",
+		"localhost:7004", "localhost:7005", "localhost:7006",
+	}
+
+	cache, err := NewRedisCache(addrs, 3*time.Second, nil, logger)
 	require.NoError(t, err)
 
 	t.Cleanup(func() { // регестрируем закрытие клиента после теста
@@ -136,9 +141,12 @@ func TestRedis_Concurency(t *testing.T) {
 		go func(id int64) {
 			defer wg.Done()
 
-			user := newUniqueUser(id)
-			require.NoError(t, cache.SetUser(ctx, user, 0))
+			user := newUniqueUser(getNextTestID())
 
+			// в документации require написано что категорически нельзя использовать t.FailNow() (который под капотом использует require) из дочерних горутин, так как он в случае ошибки положит основную горутину теста, поэтому мы используем assert
+			if !assert.NoError(t, cache.SetUser(ctx, user, 0)) {
+				return // если не получилось, закрываем только эту горутину
+			}
 			_, err := cache.GetUser(ctx, user.ID)
 			assert.NoError(t, err)
 		}(int64(i))
@@ -160,13 +168,32 @@ func TestRedis_DeleteNonExistentUser(t *testing.T) {
 
 func TestRedis_GetNonKeyRedis(t *testing.T) { // пытаемся достать пользователя из несуществуюшего ключа redis, поэтому ожидаем ошибку
 	t.Parallel()
-
 	cache := newTestCache(t)
-	ctx := context.Background()
+
+	// Создаем и сразу отменяем контекст
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
 
 	_, err := cache.GetUser(ctx, 7777777)
 	require.Error(t, err)
-	assert.ErrorContains(t, err, "redis GET failed")
+
+	// Меняем ожидаемый текст на "context canceled"
+	assert.ErrorContains(t, err, "context canceled")
 }
 
 // set с nil не делаем, потому что этого не допускает логика слоя cache
+
+func TestRedis_DeleteUser_RedisError(t *testing.T) {
+	t.Parallel()
+
+	cache := newTestCache(t)
+	ctx := context.Background()
+	user := newUniqueUser(getNextTestID())
+
+	require.NoError(t, cache.Close())
+
+	err := cache.DeleteUser(ctx, user.ID)
+	require.Error(t, err)
+
+	assert.ErrorContains(t, err, "redis: client is closed")
+}

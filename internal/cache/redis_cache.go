@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strconv"
 	"time"
@@ -135,9 +136,14 @@ func (c *RedisCache) SetUser(ctx context.Context, u *domain.User, ttl time.Durat
 func (c *RedisCache) DeleteUser(ctx context.Context, id int64) error {
 	const op = "cache.redis.DeleteUser"
 
-	if err := c.client.Del(ctx, userKey(id)).Err(); err != nil {
+	result, err := c.client.Del(ctx, userKey(id)).Result()
+	if err != nil {
 		c.logger.Error("redis DEL failed", slog.String("op", op), sl.Err(err))
 		return err
+	}
+	if result == 0 {
+		c.logger.Error("redis DEL failed: key does not exist", slog.String("op", op), slog.Int64("user_ID", id))
+		return fmt.Errorf("redis DEL failed: key does not exist")
 	}
 	return nil
 }
