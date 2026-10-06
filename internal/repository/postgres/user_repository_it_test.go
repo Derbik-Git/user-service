@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/Derbik-Git/user-service/internal/domain"
-	"github.com/Derbik-Git/user-service/internal/repository/postgres/storage"
+	errorsx "github.com/Derbik-Git/user-service/internal/errors"
 	"github.com/brianvoe/gofakeit/v6"
 	"github.com/stretchr/testify/require"
 )
@@ -26,7 +26,7 @@ func createRandomUser(ctx context.Context, s *Storage) (*domain.User, error) {
 func TestPostgres_UserRepository_Integration(t *testing.T) {
 	t.Parallel()
 
-	dsn := os.Getenv("POSTGRES_DSN")
+	dsn := os.Getenv("POSTGRES_IT_TEST_DSN")
 	if dsn == "" {
 		t.Fatal("POSTGRES_DSN is not set")
 	}
@@ -67,14 +67,15 @@ func TestPostgres_UserRepository_Integration(t *testing.T) {
 		require.NoError(t, err)
 
 		_, err = store.Create(ctx, email, gofakeit.Name())
-		require.NoError(t, err)
-		require.ErrorIs(t, err, storage.ErrUserExists)
+		require.ErrorIs(t, err, errorsx.ErrAlreadyExists)
 	})
 
 	t.Run("GetUserNotFound", func(t *testing.T) {
 		user, err := store.GetUserByID(ctx, 999999999)
-		require.NoError(t, err)
-		require.Nil(t, user) // ожидаем что пользователь не найден, и когда приходить return nil, nil, это успех для этого теста, это не ошибка!
+
+		require.Error(t, err)
+		require.ErrorIs(t, err, errorsx.ErrNotFound) // проверяем, что вернулась именно ошибка "not found"
+		require.Nil(t, user)
 	})
 
 	t.Run("UpdateUser", func(t *testing.T) {
@@ -90,6 +91,13 @@ func TestPostgres_UserRepository_Integration(t *testing.T) {
 		require.Equal(t, user.ID, update.ID)
 		require.Equal(t, user.Email, update.Email)
 		require.Equal(t, user.Name, update.Name)
+
+		getUserUpd, err := store.GetUserByID(ctx, user.ID)
+		require.NoError(t, err)
+
+		require.Equal(t, user.ID, getUserUpd.ID)
+		require.Equal(t, user.Email, getUserUpd.Email)
+		require.Equal(t, user.Name, getUserUpd.Name)
 	})
 
 	t.Run("UpdateDuplicateEmail", func(t *testing.T) {
@@ -103,7 +111,7 @@ func TestPostgres_UserRepository_Integration(t *testing.T) {
 
 		_, err = store.Update(ctx, u2) // // мы тут будем менять второго пользователя, а не первого потому что id не меняется и мы уазываем что хотим поменять второго пользователя с данными от первого, потмоу что мы тут в коде их уже изменили
 		require.Error(t, err)
-		require.ErrorIs(t, err, storage.ErrUserExists) // в репозитории мы ошибку из бд маппим в ErrUserExists, поэтому тут что ошибка как раз таки ErrUserExists (!в репозитории! ошибка бд = ErrUserExists) туту проверяем что из репозитория пришла ErrUserExists
+		require.ErrorIs(t, err, errorsx.ErrAlreadyExists) // в репозитории мы ошибку из бд маппим в ErrUserExists, поэтому тут что ошибка как раз таки ErrUserExists (!в репозитории! ошибка бд = ErrUserExists) туту проверяем что из репозитория пришла ErrUserExists
 	})
 
 	t.Run("DeleteUser", func(t *testing.T) {
@@ -113,6 +121,11 @@ func TestPostgres_UserRepository_Integration(t *testing.T) {
 		require.NoError(t, store.Delete(ctx, user.ID))
 
 		err = store.Delete(ctx, user.ID)
-		require.ErrorIs(t, err, storage.ErrNotFound)
+		require.ErrorIs(t, err, errorsx.ErrNotFound)
+
+		found, err := store.GetUserByID(ctx, user.ID)
+		require.Error(t, err)
+		require.ErrorIs(t, err, errorsx.ErrNotFound) // Убеждаемся, что ошибка именно "not found", а не сбой сети
+		require.Nil(t, found)                        // так как мы удалили пользователя, то при попытке его достать, мы должны получить nil, так как его уже нет в базе
 	})
 }

@@ -9,6 +9,7 @@ import (
 	userv1 "github.com/Derbik-Git/protos-tren-redis/user/v1"
 	"github.com/Derbik-Git/user-service/internal/domain"
 	errorsx "github.com/Derbik-Git/user-service/internal/errors"
+	"github.com/Derbik-Git/user-service/internal/interceptors"
 	"github.com/Derbik-Git/user-service/internal/sl"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -53,12 +54,39 @@ func NewServer(userService UserService, logger *slog.Logger) *Server {
 	}
 }
 
+// достаём id из контекста, переданного интерцептором что бы авторизовать пользователя
+func getUserIDFromContext(ctx context.Context) (int64, bool) {
+	val := ctx.Value(interceptors.UserIDKey)
+	if val == nil {
+		return 0, false
+	}
+
+	userID, ok := val.(int64)
+	return userID, ok
+}
+
 func (s *Server) GetUser(ctx context.Context, req *userv1.GetUserRequest) (*userv1.GetUserResponse, error) {
 	const op = "app.Server.GetUser"
+
+	// достаём id из контекста
+	callerID, ok := getUserIDFromContext(ctx)
+	if !ok {
+		s.logger.Error("user_id not found in context", slog.String("op", op))
+		return nil, status.Error(codes.Internal, "internal server error")
+	}
 
 	if req == nil || req.GetId() <= 0 {
 		s.logger.Warn("invalid request", slog.String("op", op))
 		return nil, status.Error(codes.InvalidArgument, "id must be > 0")
+	}
+
+	if req.GetId() != callerID {
+		s.logger.Warn("forbidden: user tried to get another profile",
+			slog.String("op", op),
+			slog.Int64("caller_id", callerID),
+			slog.Int64("target_id", req.GetId()),
+		)
+		return nil, status.Error(codes.PermissionDenied, "access denied")
 	}
 
 	usr, err := s.UserService.GetUser(ctx, req.GetId())
@@ -84,6 +112,8 @@ func (s *Server) GetUser(ctx context.Context, req *userv1.GetUserRequest) (*user
 
 func (s *Server) CreateUser(ctx context.Context, req *userv1.CreateUserRequest) (*userv1.CreateUserResponse, error) {
 	const op = "app.Server.CreateUser"
+
+	// Метод публичный — проверка токена из контекста не требуется
 
 	if req == nil || req.GetEmail() == "" {
 		s.logger.Warn("missing email", slog.String("op", op))
@@ -119,11 +149,27 @@ func (s *Server) CreateUser(ctx context.Context, req *userv1.CreateUserRequest) 
 func (s *Server) UpdateUser(ctx context.Context, req *userv1.UpdateUserRequest) (*userv1.UpdateUserResponse, error) {
 	const op = "app.Server.UpdateUser"
 
+	callerID, ok := getUserIDFromContext(ctx)
+	if !ok {
+		s.logger.Error("user_id not found in context", slog.String("op", op))
+		return nil, status.Error(codes.Internal, "internal server error")
+	}
+
 	// Проверка валидности запроса
 	if req == nil || req.GetId() <= 0 {
 		s.logger.Warn("invalid request: id must be > 0", slog.String("op", op))
 		return nil, status.Error(codes.InvalidArgument, "id must be > 0")
 	}
+
+	if req.GetId() != callerID {
+		s.logger.Warn("forbidden: user tried to update another profile",
+			slog.String("op", op),
+			slog.Int64("caller_id", callerID),
+			slog.Int64("target_id", req.GetId()),
+		)
+		return nil, status.Error(codes.PermissionDenied, "access denied")
+	}
+
 	if req.GetEmail() == "" || req.GetName() == "" {
 		s.logger.Warn("invalid request: nothing to update", slog.String("op", op))
 		return nil, status.Error(codes.InvalidArgument, "nothing to update")
@@ -162,9 +208,24 @@ func (s *Server) UpdateUser(ctx context.Context, req *userv1.UpdateUserRequest) 
 func (s *Server) DeleteUser(ctx context.Context, req *userv1.DeleteUserRequest) (*userv1.DeleteUserResponse, error) {
 	const op = "app.Server.DeleteUser"
 
+	callerID, ok := getUserIDFromContext(ctx)
+	if !ok {
+		s.logger.Error("user_id not found in context", slog.String("op", op))
+		return nil, status.Error(codes.Internal, "internal server error")
+	}
+
 	if req == nil || req.GetId() <= 0 {
 		s.logger.Warn("invalid request", slog.String("op", op))
 		return nil, status.Error(codes.InvalidArgument, "id must be > 0")
+	}
+
+	if req.GetId() != callerID {
+		s.logger.Warn("forbidden: user tried to delete another profile",
+			slog.String("op", op),
+			slog.Int64("caller_id", callerID),
+			slog.Int64("target_id", req.GetId()),
+		)
+		return nil, status.Error(codes.PermissionDenied, "access denied")
 	}
 
 	if err := s.UserService.DeleteUser(ctx, req.GetId()); err != nil {

@@ -26,6 +26,8 @@ type Config struct {
 
 	// env-default:"5m" - cleanenv сам распарсит строку "5m" в тип time.Duration (5 минут)
 	CacheTTL time.Duration `env:"CACHE_TTL" env-default:"5m"`
+
+	JWTSecret string `env:"JWT_SECRET" env-default:"test-secret-key-super-secret-123"`
 }
 
 func main() {
@@ -46,7 +48,7 @@ func main() {
 
 	logger.Info("condig load", slog.Int("port", cfg.GRPCPort))
 
-	application, cleanup := appassembling.NewAppMain(logger, cfg.GRPCPort, cfg.PostgresDSN, cfg.RedisAddres, cfg.KafkaBrokers, cfg.CacheTTL, nil)
+	application, cleanup := appassembling.NewAppMain(logger, cfg.GRPCPort, cfg.PostgresDSN, cfg.RedisAddres, cfg.KafkaBrokers, cfg.CacheTTL, nil, cfg.JWTSecret)
 	defer func() {
 		logger.Info("running cleanup tasks...")
 		// Вызываем функцию cleanup(), которую нам вернул NewAppMain.
@@ -58,24 +60,27 @@ func main() {
 		}
 	}()
 
+	// Канал для перехвата сигналов остановки
+	stop := make(chan os.Signal, 1)
+	// Дословно, если от операционной системы придёт сигнал типа SIGTERM или SIGINT, положи его в канал stop
+	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
+
 	// запускаем gRPC-сервис в отдельном потоке, если запустить без горутины, программа зависнет на этой строчке и никогда не перейдёт к коду ожидания остановки
 	go func() {
 		if err := application.GRPCSrv.Run(); err != nil {
 			logger.Error("grpc server stopped with error", slog.String("err", err.Error()))
+
+			stop <- syscall.SIGTERM
 		}
 	}()
 
 	// Graceful shutdown
 
-	// создаём канал, который принимает сигналы от опреационной системы, например
-	stop := make(chan os.Signal, 1)
-
 	// Дословно, если от операционной системы придёт сигнал типа SIGTERM или SIGINT, положи его в канал stop
-	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
 
 	// таким образом ожидаем, пока ОС даст сигнал о завершении, и как только в канале появляеться значение подходящего типа, оно записываеться в переменную signal, если ничего не приходит, ожидает, пока не придёт
-	signal := <-stop
-	logger.Info("received signal to stop", slog.String("signal", signal.String()))
+	sig := <-stop
+	logger.Info("received signal to stop", slog.String("signal", sig.String()))
 
 	// Когда сигнал о завершении работы пришёл, программа продолжает своё выполнение и таким образом, сообщение пришло -> идём дальше -> а дальше у нас строка остановки сервиса
 	application.GRPCSrv.Stop()

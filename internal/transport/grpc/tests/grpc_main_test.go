@@ -1,27 +1,51 @@
 package tests
 
 import (
+	"context"
+	"database/sql"
 	"fmt"
 	"log"
 	"log/slog"
 	"net" // для создания сетевого слушателя (TCP)
 	"os"
+	"strings"
 	"testing"
 	"time"
+
+	_ "github.com/jackc/pgx/v5/stdlib"
 
 	userv1 "github.com/Derbik-Git/protos-tren-redis/user/v1"
 	"github.com/Derbik-Git/user-service/internal/broker/kafka"
 	"github.com/Derbik-Git/user-service/internal/cache"
+	"github.com/Derbik-Git/user-service/internal/interceptors"
+	"github.com/Derbik-Git/user-service/internal/migrate"
 	"github.com/Derbik-Git/user-service/internal/repository/postgres"
 	"github.com/Derbik-Git/user-service/internal/server"
 	"github.com/Derbik-Git/user-service/internal/service"
+	"github.com/golang-jwt/jwt/v5"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 )
+
+const testJwtSecret = "test-secret-key-12345" // Секрет для тестов
 
 var (
 	client userv1.UserServiceClient // клиент для вызовов метода gRPC
 	conn   *grpc.ClientConn         // соединение с сервером
 )
+
+// Helper: генерирует валидный JWT токен и упаковывает его в gRPC context
+func authCtx(userID int64) context.Context {
+	claims := jwt.MapClaims{
+		"uid": float64(userID),
+		"exp": time.Now().Add(time.Hour).Unix(),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenStr, _ := token.SignedString([]byte(testJwtSecret))
+
+	md := metadata.Pairs("authorization", "Bearer "+tokenStr)
+	return metadata.NewOutgoingContext(context.Background(), md)
+}
 
 func TestMain(m *testing.M) {
 	fmt.Println(">>> DEBUG: TestMain ЗАПУСТИЛСЯ <<<")
@@ -32,6 +56,18 @@ func TestMain(m *testing.M) {
 		dsn = "postgres://users_db:users_db@localhost:5433/users_db?sslmode=disable"
 	}
 
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		log.Fatalf("failed to open db for migrations: %v", err)
+	}
+
+	migrationsPath := "../../../../migrations"
+
+	if err := migrate.MigrateUp(db, migrationsPath); err != nil {
+		log.Fatalf("failed to apply migrations in test: %v", err)
+	}
+	db.Close()
+
 	postg, err := postgres.NewStorage(dsn)
 	if err != nil {
 		// Выводим РЕАЛЬНУЮ ошибку подключения %v
@@ -40,24 +76,28 @@ func TestMain(m *testing.M) {
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
-	cache, err := cache.NewRedisCache([]string{"localhost:6379"}, 3*time.Second, nil, logger)
-	if err != nil {
-		log.Fatal(err)
+	kafkaBrokersStr := os.Getenv("KAFKA_BROKERS")
+	if kafkaBrokersStr == "" {
+		kafkaBrokersStr = "127.0.0.1:9091,127.0.0.1:9092,127.0.0.1:9093"
 	}
+	testBrokers := strings.Split(kafkaBrokersStr, ",")
 
-	testKafkaBrokers := os.Getenv("SERVICE_TEST_KAFKA_BROKERS")
-	testBrokers := []string{}
-	if testKafkaBrokers != "" {
-		testBrokers = []string{testKafkaBrokers}
+	redisAddrStr := os.Getenv("REDIS_ADDRS")
+	if redisAddrStr == "" {
+		redisAddrStr = "127.0.0.1:7001"
 	}
+	redisAddrs := strings.Split(redisAddrStr, ",")
 
 	producer := kafka.NewProducer(testBrokers)
+	cache, err := cache.NewRedisCache(redisAddrs, 3*time.Second, nil, logger)
 
 	// сборка(инициализация) приложения:
 	// _
 	service := service.NewUserService(postg, cache, producer, logger, 5*time.Second) // создаётся экземпляр основной логики, с переданными зависимостями (хранилище, кэш, логгер и таймаут для кэша)
 
-	newServer := grpc.NewServer()
+	newServer := grpc.NewServer(
+		grpc.UnaryInterceptor(interceptors.AuthInterceptor(testJwtSecret)),
+	)
 
 	server.RegisterGRPCServer(newServer, service, logger) // логика регистрируется на этом сервере. Теперь сервер знает, как обрабатывать запросы к сервису пользователя.
 	// _

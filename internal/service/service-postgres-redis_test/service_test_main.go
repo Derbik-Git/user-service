@@ -54,9 +54,9 @@ func (s *TestEventStore) FindByEmail(email string) (*domain.UserEvent, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	for _, e := range s.events {
-		if e.Payload.Email == email {
-			return &e, true
+	for i := 0; i < len(s.events); i++ {
+		if s.events[i].Payload.Email == email {
+			return &s.events[i], true
 		}
 	}
 	return nil, false
@@ -80,6 +80,7 @@ func waitForKafkaEvent(t *testing.T, targetEmail string) *domain.UserEvent {
 	timeout := time.After(5 * time.Second) // максимальное время ожидания прихода сообщения от kafka
 
 	ticker := time.NewTicker(100 * time.Millisecond) // создаём тикер, который будет стараться прочитать сообщение каждую секунду, если его не добавлять, программа может пытаться читать сообщение тысячи раз, это излишне нагрузит процессор
+	defer ticker.Stop()
 
 	for {
 		select { // селект останавливает выполнение приостанавливает программу, на момент, пока ждёт какой канал первым сработает

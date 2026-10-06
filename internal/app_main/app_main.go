@@ -18,7 +18,7 @@ type App struct {
 	GRPCSrv *app.App
 }
 
-func NewAppMain(log *slog.Logger, grpcPort int, postgresDSN string, redisAddrs []string, kafkaBrokers []string, cacheTTL time.Duration, opts *redis.ClusterOptions) (*App, func() error) {
+func NewAppMain(log *slog.Logger, grpcPort int, postgresDSN string, redisAddrs []string, kafkaBrokers []string, cacheTTL time.Duration, opts *redis.ClusterOptions, jwtSecret string) (*App, func() error) {
 	const op = "app_main.NewAppMain"
 
 	if log == nil {
@@ -51,7 +51,7 @@ func NewAppMain(log *slog.Logger, grpcPort int, postgresDSN string, redisAddrs [
 
 	userService := service.NewUserService(repo, cacheInterface, eventProducer, log, cacheTTL) // тут передаём кеш интерейс в сервис, где и будет логика работы с редисом, соответственно если интерфейс не узнал о структуре, реализующей эти методы(логика чуть выше), кеша не будут включены в работу
 
-	grpcApp := app.NewApp(log, userService, grpcPort) // ВОЗВРАЩАЕТ струтктуру, которую app_main.go должен заполнить, и передавть в свою структуру App с параметром экземляра структуры из app.go, тем амым app.go передаёт струткуру, которую нужнозаполнить, что бы он работал, мы заполняем с данными из конфига в main.go, и передаём обратно в app.go через структуру в app_main.go
+	grpcApp := app.NewApp(log, userService, grpcPort, jwtSecret) // ВОЗВРАЩАЕТ струтктуру, которую app_main.go должен заполнить, и передавть в свою структуру App с параметром экземляра структуры из app.go, тем амым app.go передаёт струткуру, которую нужнозаполнить, что бы он работал, мы заполняем с данными из конфига в main.go, и передаём обратно в app.go через структуру в app_main.go
 
 	mux := http.NewServeMux()                  // http.NewServeMux() — это как диспетчер или швейцар. Его единственная задача — смотреть на URL-адрес, по которому пришел пользователь, и решать, какому куску кода отдать этот запрос.
 	mux.Handle("/metrics", promhttp.Handler()) // "Если кто-то придет по адресу /metrics, отправь его к функции promhttp.Handler()". promhttp.Handler() это готовая магия от разработчиков Прометеуса. Эта функция сама лезет в оперативную память твоего приложения, собирает все счетчики, которые мы настроили в Interceptor, превращает их в красивый текст и отдает клиенту.

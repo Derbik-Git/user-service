@@ -32,7 +32,7 @@ type Service struct {
 }
 
 func NewUserService(repo UserRepository, cache cache.Cache, broker EventProducer, log *slog.Logger, ttl time.Duration) *Service {
-	if log == nil { //используем этот блок повторно, не смотря на наличие его в хендлере, так как сервис может использоваться без хендлера, например в тестах
+	if log == nil { //используем эточто тебе тут не нравиться, что тут не так т блок повторно, не смотря на наличие его в хендлере, так как сервис может использоваться без хендлера, например в тестах
 		log = slog.Default()
 	}
 
@@ -47,7 +47,7 @@ func NewUserService(repo UserRepository, cache cache.Cache, broker EventProducer
 
 func (s *Service) CreateUser(ctx context.Context, email, name string) (*domain.User, error) {
 	const op = "service.CreateUser"
-	s.log.Info(op)
+	s.log.Info("create user", slog.String("op", op))
 
 	if email == "" || name == "" {
 		s.log.Error(op, sl.Err(errorsx.ErrInvalidInput))
@@ -65,7 +65,7 @@ func (s *Service) CreateUser(ctx context.Context, email, name string) (*domain.U
 		if err != nil {
 			s.log.Error(op, slog.String("msg", "failed to publish to kafka"), sl.Err(err))
 		} else {
-			s.log.Info(op, slog.String("msg", "kafka event published"), slog.Int64("event_id", u.ID))
+			s.log.Info("kafka event published", slog.String("op", op), slog.Int64("id", u.ID))
 		}
 	}
 
@@ -74,7 +74,8 @@ func (s *Service) CreateUser(ctx context.Context, email, name string) (*domain.U
 
 func (s *Service) GetUser(ctx context.Context, id int64) (*domain.User, error) {
 	const op = "service.GetUser"
-	s.log.Info(op)
+
+	s.log.Info("get user", slog.String("op", op))
 
 	if id <= 0 {
 		s.log.Error(op, sl.Err(errorsx.ErrInvalidInput))
@@ -111,7 +112,7 @@ func (s *Service) GetUser(ctx context.Context, id int64) (*domain.User, error) {
 
 func (s *Service) UpdateUser(ctx context.Context, u *domain.User) (*domain.User, error) {
 	const op = "service.UpdateUser"
-	s.log.Info(op)
+	s.log.Info("updating user", slog.String("op", op))
 
 	if u == nil || u.ID <= 0 || u.Email == "" || u.Name == "" {
 		s.log.Error(op, sl.Err(errorsx.ErrInvalidInput))
@@ -129,20 +130,18 @@ func (s *Service) UpdateUser(ctx context.Context, u *domain.User) (*domain.User,
 	}
 
 	if s.cache != nil {
-		if err := s.cache.SetUser(ctx, updated, s.ttl); err != nil {
-			s.log.Error("failed to update cache, attempting to delete stale data", slog.String("op", op), sl.Err(err)) // нельзя завершать работу приложения из за падения кеша, поэтому просто логируем
-			// Пытаемся удалить ключ, чтобы при следующем GetUser приложение сходило в БД
-			_ = s.cache.DeleteUser(ctx, updated.ID) // если кеш не подянялся, соответственно в кеше не удастся изменить данные, а в постгрес они изменились, поэтому нам и надо удалить ключь в кеше, что бы что бы у нас небыло такого, что в постгрес данные изменённые, а в кеше не изменённые
-			// НЮАНС: всё же если редис упал, удаление может не сработать, в этом случае данные удаляться, как только TTL ключа кеша истечёт рассинхрона между данными не будет
+		// нужно инвалидириовать запрос, что бы следующий запрос сходил в бд и записл в кеш, при гонки данных 1-ый запрос может  записать имя в бд и подвиснуть, а в этот момент второй запрос на это же имя перепишет данные и запишет их и в бд и в кеш, потом после сетевой задержки проснётся первый запрос и уже закончит начятое и запишет данные в кеш, получиться что в бд имя от второго запрос, а в кеше, от первого, поэтому перед update cache надо чистить данные
+		if err := s.cache.DeleteUser(ctx, u.ID); err != nil {
+			s.log.Warn("failed to invalidate cache on update", slog.String("op", op), sl.Err(err))
 		}
 	}
 
 	if s.broker != nil {
 		err := s.broker.PublishUserEvent(ctx, domain.TopicUserEvents, domain.UserUpdated, updated)
 		if err != nil {
-			s.log.Error(op, slog.String("msg", "failed publish to kafka"), sl.Err(err))
+			s.log.Error("failed publish to kafka", slog.String("op", op), sl.Err(err))
 		} else {
-			s.log.Info(op, slog.String("msg", "event publish"))
+			s.log.Info("event publish", slog.String("op", op))
 		}
 	}
 
@@ -151,7 +150,7 @@ func (s *Service) UpdateUser(ctx context.Context, u *domain.User) (*domain.User,
 
 func (s *Service) DeleteUser(ctx context.Context, id int64) error {
 	const op = "service.DeleteUser"
-	s.log.Info(op)
+	s.log.Info("delete user", slog.String("op", op))
 
 	if id <= 0 {
 		s.log.Error(op, sl.Err(errorsx.ErrInvalidInput))
@@ -165,17 +164,16 @@ func (s *Service) DeleteUser(ctx context.Context, id int64) error {
 
 	if s.cache != nil {
 		if err := s.cache.DeleteUser(ctx, id); err != nil {
-			s.log.Warn(op, sl.Err(err))
-			return err
+			s.log.Warn("failed to delete user from cache", slog.String("op", op), sl.Err(err))
 		}
 	}
 
 	if s.broker != nil {
 		err := s.broker.PublishUserEvent(ctx, domain.TopicUserEvents, domain.UserDeleted, &domain.User{ID: id})
 		if err != nil {
-			s.log.Error(op, slog.String("msg", "failed to publish to kafka"), sl.Err(err))
+			s.log.Error("failed to publish to kafka", slog.String("op", op), sl.Err(err))
 		} else {
-			s.log.Info(op, slog.String("msg", "event published"))
+			s.log.Info("event publish", slog.String("op", op))
 		}
 	}
 

@@ -13,6 +13,7 @@ import (
 
 	"github.com/Derbik-Git/user-service/internal/cache"
 	"github.com/Derbik-Git/user-service/internal/domain"
+	errorsx "github.com/Derbik-Git/user-service/internal/errors"
 	"github.com/Derbik-Git/user-service/internal/service"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -37,12 +38,9 @@ import (
 ✔
 */
 
-func newUniqueUser() *domain.User {
-	id := time.Now().UnixNano()
-
+func newUniqueUser(nameTest string, seed int64) *domain.User {
 	return &domain.User{
-		ID:        id,
-		Email:     fmt.Sprintf("test+%d@gmail.com", id),
+		Email:     fmt.Sprintf("%s+%d@gmail.com", nameTest, seed),
 		Name:      "ItSvcPostRedTest",
 		CreatedAt: time.Now(),
 	}
@@ -59,28 +57,28 @@ func flushRedis(t *testing.T) { // чистим редис после каждо
 func TestService_CreateUser(t *testing.T) {
 	t.Parallel()
 
-	user := newUniqueUser()
+	user := newUniqueUser("TestService_CreateUser", 1)
 	ctx := context.Background()
 
-	_, err := env.Svc.CreateUser(ctx, user.Email, user.Name)
+	createdUser, err := env.Svc.CreateUser(ctx, user.Email, user.Name)
 	require.NoError(t, err)
 
-	getUser, err := env.Svc.CreateUser(ctx, user.Email, user.Name)
+	getUser, err := env.Svc.GetUser(ctx, createdUser.ID)
 	require.NoError(t, err)
-	require.Equal(t, user.Email, getUser.Email)
+	require.Equal(t, createdUser.Email, getUser.Email)
 }
 
 // Тут вообще должен был быть тест на то, что если в постгресе вернулась ошибка о уникальности, то редис не должен был записать, но так как у меня метод создания пользователя в сервисе не добавляет пользователя в редис, а только создаёт его в постгрес, то редис и не будет ничего записывать, так что я просто проверю что при создании пользователя с таким же email, постгрес вернёт ошибку, а редис не запишет
 func TestService_Create_UniqueViolation(t *testing.T) {
 	t.Parallel()
 
-	user := newUniqueUser()
+	user := newUniqueUser("TestService_Create_UniqueViolation", 2)
 	ctx := context.Background()
 
-	_, err := env.Svc.CreateUser(ctx, user.Email, user.Name)
+	createdUser, err := env.Svc.CreateUser(ctx, user.Email, user.Name)
 	require.NoError(t, err)
 
-	_, err = env.Svc.CreateUser(ctx, user.Email, user.Name)
+	_, err = env.Svc.CreateUser(ctx, createdUser.Email, createdUser.Name)
 	require.Error(t, err)
 }
 
@@ -89,16 +87,16 @@ func TestService_CacheMiss_ToRedis(t *testing.T) { // проверяем как 
 
 	ctx := context.Background()
 
-	user := newUniqueUser()
+	user := newUniqueUser("TestService_CacheMiss_ToRedis", 3)
 
-	_, err := env.Svc.CreateUser(ctx, user.Name, user.Email)
+	createdUser, err := env.Svc.CreateUser(ctx, user.Email, user.Name)
 	require.NoError(t, err)
-	_, err = env.Svc.GetUser(ctx, user.ID) // это нужно для того что бы пользователь добавился и в редис потому что под капотом(в сервисе) этот метод добавляет пользователя в redis, а create не добавляет
+	_, err = env.Svc.GetUser(ctx, createdUser.ID) // это нужно для того что бы пользователь добавился и в редис потому что под капотом(в сервисе) этот метод добавляет пользователя в redis, а create не добавляет
 	require.NoError(t, err)
 
-	resultPgGet, err := env.Repo.GetUserByID(ctx, user.ID) // под капотом в сервисе за счёт этого запроса пользователь при гет запросе в постгрес пользователь добавляется в redis
+	resultPgGet, err := env.Repo.GetUserByID(ctx, createdUser.ID) // под капотом в сервисе за счёт этого запроса пользователь при гет запросе в постгрес пользователь добавляется в redis
 	require.NoError(t, err)
-	require.Equal(t, user.Email, resultPgGet.Email)
+	require.Equal(t, createdUser.Email, resultPgGet.Email)
 
 	resultCacheGet, err := env.Cache.GetUser(ctx, user.ID) // проверяем как метод гет из сервиса добавил пользователя в редиc
 	require.NoError(t, err)
@@ -110,18 +108,18 @@ func TestService_CacheHit(t *testing.T) { //Удаляем из постгрес
 
 	ctx := context.Background()
 
-	user := newUniqueUser()
+	user := newUniqueUser("TestService_CacheHit", 4)
 
-	_, err := env.Svc.CreateUser(ctx, user.Email, user.Name)
+	createdUser, err := env.Svc.CreateUser(ctx, user.Email, user.Name)
 	require.NoError(t, err)
-	_, err = env.Svc.GetUser(ctx, user.ID) // нужно для добавления пользователя в redis, createUser в сервисе не добавляет пользователя в redis, а создаёт его только в Postgres
+	_, err = env.Svc.GetUser(ctx, createdUser.ID) // нужно для добавления пользователя в redis, createUser в сервисе не добавляет пользователя в redis, а создаёт его только в Postgres
 	require.NoError(t, err)
 
-	require.Error(t, env.Repo.Delete(ctx, user.ID))
+	require.NoError(t, env.Repo.Delete(ctx, createdUser.ID))
 
-	cacheGetResult, err := env.Svc.GetUser(ctx, user.ID) // так как из pg удалено ожидаем что вернёт redis
+	cacheGetResult, err := env.Svc.GetUser(ctx, createdUser.ID) // так как из pg удалено ожидаем что вернёт redis
 	require.NoError(t, err)
-	require.Equal(t, user.Email, cacheGetResult.Email)
+	require.Equal(t, createdUser.Email, cacheGetResult.Email)
 }
 
 func TestService_Delete_Consistency(t *testing.T) { // удаляем сервисом, смотрим как удалилось и там и там
@@ -129,61 +127,61 @@ func TestService_Delete_Consistency(t *testing.T) { // удаляем серви
 
 	ctx := context.Background()
 
-	user := newUniqueUser()
+	user := newUniqueUser("TestService_Delete_Consistency", 5)
 
-	_, err := env.Svc.CreateUser(ctx, user.Email, user.Name)
+	createdUser, err := env.Svc.CreateUser(ctx, user.Email, user.Name)
 	require.NoError(t, err)
-	_, err = env.Svc.GetUser(ctx, user.ID)
+	_, err = env.Svc.GetUser(ctx, createdUser.ID)
 	require.NoError(t, err)
 
-	require.NoError(t, env.Svc.DeleteUser(ctx, user.ID))
+	require.NoError(t, env.Svc.DeleteUser(ctx, createdUser.ID))
 
-	_, err = env.Repo.GetUserByID(ctx, user.ID)
-	require.NoError(t, err) // у нас код под капотом возвращает nil, nil, и это не будет являтся ошибкой, поэтому тест продолжит выполнение
+	_, err = env.Repo.GetUserByID(ctx, createdUser.ID)
+	require.ErrorIs(t, err, errorsx.ErrNotFound) // у нас код под капотом возвращает nil, nil, и это не будет являтся ошибкой, поэтому тест продолжит выполнение
 
-	_, err = env.Cache.GetUser(ctx, user.ID)
+	_, err = env.Cache.GetUser(ctx, createdUser.ID)
 	require.NoError(t, err) // туту аналогично как и с репозиторием в строке 88
 }
 
 func TestService_Update_OverwriteCache(t *testing.T) { // проверяем благополучно ли сохраняются значения и в pg и в redis
 	t.Parallel()
 
-	user := newUniqueUser()
+	user := newUniqueUser("TestService_Update_OverwriteCache", 6)
 	ctx := context.Background()
 
-	_, err := env.Svc.CreateUser(ctx, user.Email, user.Name)
+	createdUser, err := env.Svc.CreateUser(ctx, user.Email, user.Name)
 	require.NoError(t, err)
-	_, err = env.Svc.GetUser(ctx, user.ID)
-	require.NoError(t, err)
-
-	user.Email = "update@email"
-
-	_, err = env.Svc.UpdateUser(ctx, user)
+	_, err = env.Svc.GetUser(ctx, createdUser.ID)
 	require.NoError(t, err)
 
-	repoUpdateResult, err := env.Repo.GetUserByID(ctx, user.ID)
-	require.NoError(t, err)
-	require.Equal(t, "update@email", repoUpdateResult.Email)
+	createdUser.Email = fmt.Sprintf("update-%d@email", createdUser.ID)
 
-	cacheUpdateResult, err := env.Cache.GetUser(ctx, user.ID)
+	_, err = env.Svc.UpdateUser(ctx, createdUser)
 	require.NoError(t, err)
-	require.Equal(t, "update@email", cacheUpdateResult.Email)
+
+	repoUpdateResult, err := env.Repo.GetUserByID(ctx, createdUser.ID)
+	require.NoError(t, err)
+	require.Equal(t, createdUser.Email, repoUpdateResult.Email)
+
+	cacheUpdateResult, err := env.Cache.GetUser(ctx, createdUser.ID)
+	require.NoError(t, err)
+	require.Equal(t, createdUser.Email, cacheUpdateResult.Email)
 }
 
 func TestService_FullConsistency(t *testing.T) { // проверяем все ли между собой благополучно работает, и сервис и pg и redis
 	t.Parallel()
 
-	user := newUniqueUser()
+	user := newUniqueUser("TestService_FullConsistency", 7)
 	ctx := context.Background()
 
-	_, err := env.Svc.CreateUser(ctx, user.Email, user.Name)
+	createdUser, err := env.Svc.CreateUser(ctx, user.Email, user.Name)
 	require.NoError(t, err)
-	_, err = env.Svc.GetUser(ctx, user.ID)
+	_, err = env.Svc.GetUser(ctx, createdUser.ID)
 	require.NoError(t, err)
 
-	serviceUser, _ := env.Svc.GetUser(ctx, user.ID)
-	postgresUser, _ := env.Repo.GetUserByID(ctx, user.ID)
-	cacheUser, _ := env.Cache.GetUser(ctx, user.ID)
+	serviceUser, _ := env.Svc.GetUser(ctx, createdUser.ID)
+	postgresUser, _ := env.Repo.GetUserByID(ctx, createdUser.ID)
+	cacheUser, _ := env.Cache.GetUser(ctx, createdUser.ID)
 
 	require.Equal(t, serviceUser.Email, postgresUser.Email)
 	require.Equal(t, postgresUser.Email, cacheUser.Email)
@@ -192,19 +190,19 @@ func TestService_FullConsistency(t *testing.T) { // проверяем все л
 func TestService_CacheMiss(t *testing.T) { // это очень интересный тест, потому что если с редисом нет соединения, то просто блок с редисом не будет выполнятся, но вот если соединение есть и пользователь был как бы добавлен в pg и сделан get запрос соответственно он был добавлен и в редис, но вдруг мы его от туда удаляем и у нас интерес, выдаст ли программа nil, nil или же как нужно достанет пользователя из pg
 	t.Parallel()
 
-	user := newUniqueUser()
+	user := newUniqueUser("TestService_CacheMiss", 8)
 	ctx := context.Background()
 
-	_, err := env.Svc.CreateUser(ctx, user.Email, user.Name)
+	createdUser, err := env.Svc.CreateUser(ctx, user.Email, user.Name)
 	require.NoError(t, err)
-	_, err = env.Svc.GetUser(ctx, user.ID)
+	_, err = env.Svc.GetUser(ctx, createdUser.ID)
 	require.NoError(t, err)
 
-	require.NoError(t, env.Cache.DeleteUser(ctx, user.ID))
+	require.NoError(t, env.Cache.DeleteUser(ctx, createdUser.ID))
 
-	getPG, err := env.Svc.GetUser(ctx, user.ID)
+	getPG, err := env.Svc.GetUser(ctx, createdUser.ID)
 	require.NoError(t, err)
-	require.Equal(t, user.Email, getPG.Email)
+	require.Equal(t, createdUser.Email, getPG.Email)
 }
 
 // Проверяет устойчивость сервиса к ошибке подключения к Redis: если Redis недоступен, сервис должен корректно работать только с Postgres.
@@ -213,11 +211,11 @@ func TestService_RedisFallbackToPG(t *testing.T) {
 
 	ctx := context.Background()
 
-	user := newUniqueUser()
+	user := newUniqueUser("TestService_RedisFallbackToPG", 9)
 
-	_, err := env.Svc.CreateUser(ctx, user.Email, user.Name)
+	createdUser, err := env.Svc.CreateUser(ctx, user.Email, user.Name)
 	require.NoError(t, err)
-	_, err = env.Svc.GetUser(ctx, user.ID)
+	_, err = env.Svc.GetUser(ctx, createdUser.ID)
 	require.NoError(t, err)
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
@@ -234,21 +232,21 @@ func TestService_RedisFallbackToPG(t *testing.T) {
 
 	svc := service.NewUserService(env.Repo, brokenCache, env.KafkaProducer, logger, 5*time.Second)
 
-	result, err := svc.GetUser(ctx, user.ID)
+	result, err := svc.GetUser(ctx, createdUser.ID)
 
 	require.NoError(t, err)
-	require.Equal(t, user.Email, result.Email)
+	require.Equal(t, createdUser.Email, result.Email)
 }
 
 func TestService_TTL_SetAndFresh(t *testing.T) { // проверяем ttl, нормлаьно ли обновляется
 	t.Parallel()
 
-	user := newUniqueUser()
+	user := newUniqueUser("TestService_TTL_SetAndFresh", 10)
 	ctx := context.Background()
 
-	_, err := env.Svc.CreateUser(ctx, user.Email, user.Name)
+	createdUser, err := env.Svc.CreateUser(ctx, user.Email, user.Name)
 	require.NoError(t, err)
-	_, err = env.Svc.GetUser(ctx, user.ID)
+	_, err = env.Svc.GetUser(ctx, createdUser.ID)
 	require.NoError(t, err)
 
 	key := "user:" + strconv.Itoa(int(user.ID)) // нужно лишь для функции TTL что бы достать значение токена
@@ -257,7 +255,7 @@ func TestService_TTL_SetAndFresh(t *testing.T) { // проверяем ttl, но
 	require.NoError(t, err)
 	require.Greater(t, ttl1.Seconds(), 0.0) // Утверждаем, что значение, возвращаемое ttl1.Seconds(), больше 0.0. Если это не так, то тест немедленно завершается с ошибкой, и в сообщении об ошибке будет указано, что утверждение не выполнено.
 
-	_, err = env.Svc.UpdateUser(ctx, user)
+	_, err = env.Svc.UpdateUser(ctx, createdUser)
 	require.NoError(t, err)
 
 	ttl2, err := env.Cache.Client().TTL(ctx, key).Result()
@@ -269,12 +267,12 @@ func TestService_TTL_SetAndFresh(t *testing.T) { // проверяем ttl, но
 func TestService_ConcurrencyAccess(t *testing.T) {
 	t.Parallel()
 
-	user := newUniqueUser()
+	user := newUniqueUser("TestService_ConcurrencyAccess", 11)
 	ctx := context.Background()
 
-	_, err := env.Svc.CreateUser(ctx, user.Email, user.Name)
+	createdUser, err := env.Svc.CreateUser(ctx, user.Email, user.Name)
 	require.NoError(t, err)
-	_, err = env.Svc.GetUser(ctx, user.ID)
+	_, err = env.Svc.GetUser(ctx, createdUser.ID)
 	require.NoError(t, err)
 
 	var wg sync.WaitGroup
@@ -296,39 +294,39 @@ func TestService_ConcurrencyAccess(t *testing.T) {
 func TestService_TTL_Expiration(t *testing.T) {
 	t.Parallel()
 
-	user := newUniqueUser()
+	user := newUniqueUser("TestService_TTL_Expiration", 12)
 	ctx := context.Background()
 
-	_, err := env.Svc.CreateUser(ctx, user.Email, user.Name)
+	createdUser, err := env.Svc.CreateUser(ctx, user.Email, user.Name)
 	require.NoError(t, err)
-	_, err = env.Svc.GetUser(ctx, user.ID)
+	_, err = env.Svc.GetUser(ctx, createdUser.ID)
 	require.NoError(t, err)
 
 	time.Sleep(6 * time.Second)
 
 	// Ожидаем пустой redis, так как TTL истёк
-	_, err = env.Cache.GetUser(ctx, user.ID)
+	_, err = env.Cache.GetUser(ctx, createdUser.ID)
 	require.Error(t, err)
 
 	// это что бы значение заного добавилось в redis
-	_, err = env.Svc.GetUser(ctx, user.ID)
+	_, err = env.Svc.GetUser(ctx, createdUser.ID)
 	require.NoError(t, err)
 
 	CacheGetTrue, err := env.Svc.GetUser(ctx, user.ID)
 	require.NoError(t, err)
-	require.Equal(t, user.Email, CacheGetTrue.Email)
+	require.Equal(t, createdUser.Email, CacheGetTrue.Email)
 }
 
 // Проверка race condition при одновременном обновлении и получении данных
 func TestService_Concurrent_UpdateAndGet(t *testing.T) {
 	t.Parallel()
 
-	user := newUniqueUser()
+	user := newUniqueUser("TestService_Concurrent_UpdateAndGet", 13)
 	ctx := context.Background()
 
-	_, err := env.Svc.CreateUser(ctx, user.Email, user.Name)
+	createdUser, err := env.Svc.CreateUser(ctx, user.Email, user.Name)
 	require.NoError(t, err)
-	_, err = env.Svc.GetUser(ctx, user.ID)
+	_, err = env.Svc.GetUser(ctx, createdUser.ID)
 	require.NoError(t, err)
 
 	var wg sync.WaitGroup
@@ -346,7 +344,7 @@ func TestService_Concurrent_UpdateAndGet(t *testing.T) {
 
 		go func() {
 			defer wg.Done()
-			_, _ = env.Svc.GetUser(ctx, user.ID)
+			_, _ = env.Svc.GetUser(ctx, createdUser.ID)
 		}()
 	}
 
@@ -368,7 +366,7 @@ func TestKafka_LifeCicle_Integrstion(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	user := newUniqueUser()
+	user := newUniqueUser("TestKafka_LifeCicle_Integrstion", 14)
 	createdUser, err := env.Svc.CreateUser(ctx, user.Email, user.Name)
 	require.NoError(t, err)
 	assert.Equal(t, user.Email, createdUser.Email)
@@ -389,7 +387,7 @@ func TestKafka_Ordering_integration(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	user := newUniqueUser()
+	user := newUniqueUser("TestKafka_Ordering_integration", 15)
 	createdUser, err := env.Svc.CreateUser(ctx, user.Email, user.Name)
 	require.NoError(t, err)
 
@@ -422,10 +420,12 @@ func TestKafka_ConcurrentPublishing_integration(t *testing.T) {
 	for i := 0; i < numUsers; i++ {
 		go func(idx int) { // Когда интерпретатор видит (i), он берет текущее значение счетчика (например, 0), копирует его в новую локальную переменную внутри стека новой горутины и называет её idx. Теперь для этой конкретной горутины idx навсегда равен 0, даже если внешняя переменная i изменится до 1, 2 или 50. Это полностью изолирует данные.
 			defer wg.Done()
-			user := newUniqueUser()
+			user := newUniqueUser("TestKafka_ConcurrentPublishing_integration", int64(i))
 			emails[idx] = user.Email // помещаем email сгенерированного пользователя по индексу(для массива) по значению итерации цикла, что бы потом через wqitForKafkaEvent проверить всё ли успешно записалось
 			_, err := env.Svc.CreateUser(ctx, user.Email, user.Name)
-			require.NotNil(t, err)
+			if err != nil {
+				t.Errorf("failed to create user in goroutine: %v", err) // в дочерних горутинах запрещяется использовать require
+			}
 		}(i)
 	}
 	wg.Wait()
@@ -441,14 +441,13 @@ func TestKafka_ConcurrentPublishing_integration(t *testing.T) {
 // тест требует внимания!!!
 // проверка на идемпотентность
 func TestKafka_Idempotency_integration(t *testing.T) {
-	t.Parallel()
 	ctx := context.Background()
 
-	user := newUniqueUser()
-	_, err := env.Svc.CreateUser(ctx, user.Email, user.Name)
+	user := newUniqueUser("TestKafka_Idempotency_integration", 16)
+	createdUser, err := env.Svc.CreateUser(ctx, user.Email, user.Name)
 	require.NoError(t, err)
 
-	firstEvent := waitForKafkaEvent(t, user.Email) // мы кладём в кафку наш первый ивент (иммитируем базовую работу kafka)
+	firstEvent := waitForKafkaEvent(t, createdUser.Email) // мы кладём в кафку наш первый ивент (иммитируем базовую работу kafka)
 	require.NotNil(t, firstEvent)
 
 	TestEventStoreGlobal.mu.Lock()

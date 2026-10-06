@@ -15,25 +15,25 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// В этом, саом первом тесте даны грамотные объяснения как работает тестирование
+// Структура для изоляции перехваченных данных каждого отдельного подтеста
+type capturedData struct {
+	topic       string
+	event       string
+	user        *domain.User
+	cacheCalled bool
+}
+
+// В этом, самом первом тесте даны грамотные объяснения как работает тестирование
 func TestService_CreateUser(t *testing.T) {
 	t.Parallel() // объявляем что тесты могут выполнятся параллельно
 
 	ctx := context.Background() // создаём контекст, просто потому что этого требует логика сервиса
 
-	var capturedTopic string
-	var capturedEvent string
-	var capturedUser *domain.User // !!! эта перменная нужня для проверки правильные ли данные сервис пытался отправить в брокер kafka
-
-	var cacheCalled bool
-
 	tests := []struct {
 		nameTest      string
 		emailArgument string
 		nameArgument  string
-		repo          *mocks.UserRepositoryMock
-		cache         *mocks.CacheMock
-		broker        *mocks.EventProducerMock
+		setup         func(t *testing.T) (*mocks.UserRepositoryMock, *mocks.CacheMock, *mocks.EventProducerMock, *capturedData)
 		wantKafkaCall bool
 		wantCacheCall bool
 		wantErr       error // ожидание что вернёт тест, тут идёт сверка, то ли врнул тест или нет(аргумент, который мы ожидаем)
@@ -42,59 +42,64 @@ func TestService_CreateUser(t *testing.T) {
 			nameTest:      "success",
 			emailArgument: "test@email.com",
 			nameArgument:  "Bob Proctor",
-			repo: &mocks.UserRepositoryMock{
-				CreateFunc: func(ctx context.Context, email, name string) (*domain.User, error) { // говорим что от этого метода ожидаем вот такой вот return(строчка ниже)
-					return &domain.User{ID: 1, Email: email, Name: name}, nil // мы лишь описываем что должно вернутся в случае если сервис вызовет CreateFunc, то есть если при запуске теста именно сервис вызовет CreateFunc в моке, так как настоящий репозиторий ничего не может вернуть, так как это Unit тесты и у нас стоит мок, мы говорим что при вызове такой то функции из мока &mocks.UserRepositoryMock{CreateFunc: func(ctx context.Context, email, name string) (*domain.User, error), хотим увидеть вот такой результат return &domain.User{ID: 1, Email: email, Name: name}, nil
-				},
-			},
-			cache: &mocks.CacheMock{
-				SetUserFunc: func(ctx context.Context, u *domain.User, ttl time.Duration) error {
-					cacheCalled = true
-					return nil
-				},
-			},
-			broker: &mocks.EventProducerMock{
-				PublishUserEventFunc: func(ctx context.Context, topic string, eventType string, event *domain.User) error {
-					// перехватываем событие в структуру, что бы потом проверить правильное ли сообщение хотел отправить сервис в брокер kafka
-					capturedTopic = topic
-					capturedEvent = eventType
-					capturedUser = event
-					return nil // символезируем об успешном выполнении без ошибок
-				},
+			setup: func(t *testing.T) (*mocks.UserRepositoryMock, *mocks.CacheMock, *mocks.EventProducerMock, *capturedData) {
+				cap := &capturedData{}
+				repo := &mocks.UserRepositoryMock{
+					CreateFunc: func(ctx context.Context, email, name string) (*domain.User, error) { // говорим что от этого метода ожидаем вот такой вот return(строчка ниже)
+						return &domain.User{ID: 1, Email: email, Name: name}, nil // мы лишь описываем что должно вернутся в случае если сервис вызовет CreateFunc, то есть если при запуске теста именно сервис вызовет CreateFunc в моке, так как настоящий репозиторий ничего не может вернуть, так как это Unit тесты и у нас стоит мок, мы говорим что при вызове такой то функции из мока &mocks.UserRepositoryMock{CreateFunc: func(ctx context.Context, email, name string) (*domain.User, error), хотим увидеть вот такой результат return &domain.User{ID: 1, Email: email, Name: name}, nil
+					},
+				}
+				cache := &mocks.CacheMock{}
+				broker := &mocks.EventProducerMock{
+					PublishUserEventFunc: func(ctx context.Context, topic string, eventType string, event *domain.User) error {
+						// перехватываем событие в структуру, что бы потом проверить правильное ли сообщение хотел отправить сервис в брокер kafka
+						cap.topic = topic
+						cap.event = eventType
+						cap.user = event
+						return nil // символезируем об успешном выполнении без ошибок
+					},
+				}
+				return repo, cache, broker, cap
 			},
 			wantKafkaCall: true,
-			wantCacheCall: true,
+			wantCacheCall: false,
 			wantErr:       nil,
 		},
 		{
 			nameTest:      "invalid input",
 			emailArgument: "",
 			nameArgument:  "",
-			repo:          &mocks.UserRepositoryMock{}, // тут программа даже не доходит типо до репозитория, она падает уже в сервисе, потому что ввод не верный, эта логика указана в сервисе, тио если email == "" || name == "", то возвращаем и errorsx.ErrInvalidArgument, поэтому и тут всё так, ожидаем именно эту ошибку и не вызываем как бы вот такой метод мока CreateFunc: func(ctx context.Context, email, name string) (*domain.User, error) как в сосседних тестах, потому что программа даже до него не доходит, а падает на проверке if == "" уже в сервисе не доходя до репозитория
-			broker:        &mocks.EventProducerMock{},
+			setup: func(t *testing.T) (*mocks.UserRepositoryMock, *mocks.CacheMock, *mocks.EventProducerMock, *capturedData) {
+				cap := &capturedData{}
+				repo := &mocks.UserRepositoryMock{} // тут программа даже не доходит типо до репозитория, она падает уже в сервисе, потому что ввод не верный, эта логика указана в сервисе, тио если email == "" || name == "", то возвращаем и errorsx.ErrInvalidArgument, поэтому и тут всё так, ожидаем именно эту ошибку и не вызываем как бы вот такой метод мока CreateFunc: func(ctx context.Context, email, name string) (*domain.User, error) как в сосседних тестах, потому что программа даже до него не доходит, а падает на проверке if == "" уже в сервисе не доходя до репозитория
+				broker := &mocks.EventProducerMock{}
+				cache := &mocks.CacheMock{}
+				return repo, cache, broker, cap
+			},
+			wantKafkaCall: false,
+			wantCacheCall: false,
 			wantErr:       errorsx.ErrInvalidInput,
 		},
 		{
 			nameTest:      "repository error",
 			emailArgument: "test@email.com",
 			nameArgument:  "Bob Proctor",
-			repo: &mocks.UserRepositoryMock{
-				CreateFunc: func(ctx context.Context, email, name string) (*domain.User, error) {
-					return nil, errors.New("db error") // а тут мы ожидаем ошибку именно от репозитория, поэтому и вызываем мок метод репозитория(ну то есть говорим что хотим от него получить)
-				},
-			},
-			cache: &mocks.CacheMock{
-				SetUserFunc: func(ctx context.Context, u *domain.User, ttl time.Duration) error {
-					t.Fatalf("при ошибке repository, кеш не должен был вызваться, а он вызвался!")
-					return nil
-				},
-			},
-			// Кафка не должна быть вызвана сервисом в случае ошибки бд, поэтому мы роняем тест, если сервис после ошибки бд, попытался вызвать метод kafka
-			broker: &mocks.EventProducerMock{
-				PublishUserEventFunc: func(ctx context.Context, topic string, eventType string, event *domain.User) error {
-					t.Fatalf("Сервис при ошибке repository, попытался вызвать метод kafka, этого не должно было случиться!")
-					return nil
-				},
+			setup: func(t *testing.T) (*mocks.UserRepositoryMock, *mocks.CacheMock, *mocks.EventProducerMock, *capturedData) {
+				cap := &capturedData{}
+				repo := &mocks.UserRepositoryMock{
+					CreateFunc: func(ctx context.Context, email, name string) (*domain.User, error) {
+						return nil, errors.New("db error") // а тут мы ожидаем ошибку именно от репозитория, поэтому и вызываем мок метод репозитория(ну то есть говорим что хотим от него получить)
+					},
+				}
+				cache := &mocks.CacheMock{}
+				// Кафка не должна быть вызвана сервисом в случае ошибки бд, поэтому мы роняем тест, если сервис после ошибки бд, попытался вызвать метод kafka
+				broker := &mocks.EventProducerMock{
+					PublishUserEventFunc: func(ctx context.Context, topic string, eventType string, event *domain.User) error {
+						t.Fatalf("Сервис при ошибке repository, попытался вызвать метод kafka, этого не должно было случиться!")
+						return nil
+					},
+				}
+				return repo, cache, broker, cap
 			},
 			wantKafkaCall: false, // Сервис должен прервать работу до вызова Кафки
 			wantCacheCall: false,
@@ -104,92 +109,89 @@ func TestService_CreateUser(t *testing.T) {
 			nameTest:      "broker error: user created but kafka failed",
 			emailArgument: "test@mail.com",
 			nameArgument:  "Bob Proctor",
-			repo: &mocks.UserRepositoryMock{
-				CreateFunc: func(ctx context.Context, email, name string) (*domain.User, error) {
-					return &domain.User{ID: 1, Email: email, Name: name}, nil
-				},
-			},
-			cache: &mocks.CacheMock{
-				SetUserFunc: func(ctx context.Context, u *domain.User, ttl time.Duration) error {
-					cacheCalled = true
-					return nil
-				},
-			},
-			broker: &mocks.EventProducerMock{
-				PublishUserEventFunc: func(ctx context.Context, topic string, eventType string, event *domain.User) error {
-					capturedTopic = topic
-					capturedEvent = eventType
-					capturedUser = event
+			setup: func(t *testing.T) (*mocks.UserRepositoryMock, *mocks.CacheMock, *mocks.EventProducerMock, *capturedData) {
+				cap := &capturedData{}
+				repo := &mocks.UserRepositoryMock{
+					CreateFunc: func(ctx context.Context, email, name string) (*domain.User, error) {
+						return &domain.User{ID: 1, Email: email, Name: name}, nil
+					},
+				}
+				cache := &mocks.CacheMock{}
+				broker := &mocks.EventProducerMock{
+					PublishUserEventFunc: func(ctx context.Context, topic string, eventType string, event *domain.User) error {
+						cap.topic = topic
+						cap.event = eventType
+						cap.user = event
 
-					return errors.New("kafka connection refused")
-				},
+						return errors.New("kafka connection refused")
+					},
+				}
+				return repo, cache, broker, cap
 			},
 			wantKafkaCall: true,
-			wantCacheCall: true,
+			wantCacheCall: false,
 			wantErr:       nil,
 		},
 		{
 			nameTest:      "cache error: user created but cache failed",
 			emailArgument: "test@email.com",
 			nameArgument:  "Bob Proctor",
-			repo: &mocks.UserRepositoryMock{
-				CreateFunc: func(ctx context.Context, email, name string) (*domain.User, error) {
-					return &domain.User{ID: 1, Email: email, Name: name}, nil
-				},
+			setup: func(t *testing.T) (*mocks.UserRepositoryMock, *mocks.CacheMock, *mocks.EventProducerMock, *capturedData) {
+				cap := &capturedData{}
+				repo := &mocks.UserRepositoryMock{
+					CreateFunc: func(ctx context.Context, email, name string) (*domain.User, error) {
+						return &domain.User{ID: 1, Email: email, Name: name}, nil
+					},
+				}
+				cache := &mocks.CacheMock{}
+				broker := &mocks.EventProducerMock{
+					PublishUserEventFunc: func(ctx context.Context, topic string, eventType string, event *domain.User) error {
+						cap.topic = "user-events"
+						cap.event = domain.UserCreated
+						cap.user = event
+						return nil
+					},
+				}
+				return repo, cache, broker, cap
 			},
-			cache: &mocks.CacheMock{
-				SetUserFunc: func(ctx context.Context, u *domain.User, ttl time.Duration) error {
-					cacheCalled = true
-					return errors.New("redis ")
-				},
-			},
-			broker: &mocks.EventProducerMock{
-				PublishUserEventFunc: func(ctx context.Context, topic string, eventType string, event *domain.User) error {
-					return nil
-				},
-			},
-
 			wantKafkaCall: true,
-			wantCacheCall: true,
+			wantCacheCall: false, // сервис при создании не вызвает кеш, нечего проверять, не ожидаем вызов кеша
 			wantErr:       nil,
 		},
 	}
 
 	for _, tt := range tests {
-		tt := tt                              // дословно мы туту говорим Скопируй содержимое листа tt и положи его на новый отдельный лист, который будет жить только в этой итерации, это нужно для того что бы у каждой горутины/теста был свой собственный лист, как я понял, в кратце мы создаём дял каждого теста свою копию, что бы тесты не трогали один и тот же лист, без этого все тетсы читали бы последний тест кейс, а с этой конструкцией, каждй тест читает свой тест кейс
-		t.Run(tt.nameTest, func(*testing.T) { // говорим чтот запускаем тесты с таким именем tt.nameTest
+		tt := tt                                // дословно мы туту говорим Скопируй содержимое листа tt и положи его на новый отдельный лист, который будет жить только в этой итерации, это нужно для того что бы у каждой горутины/теста был свой собственный лист, как я понял, в кратце мы создаём дял каждого теста свою копию, что бы тесты не трогали один и тот же лист, без этого все тетсы читали бы последний тест кейс, а с этой конструкцией, каждй тест читает свой тест кейс
+		t.Run(tt.nameTest, func(t *testing.T) { // говорим чтот запускаем тесты с таким именем tt.nameTest
+			t.Parallel() // Запускаем подтесты параллельно и без гонок данных!
 
-			capturedEvent = "" // обнуляем перменную, что бы данные от одного теста не перетикали в другой тест
-			capturedTopic = "" // обнуляем для правильности, хотя в этом сервисе для всего используется 1 и тот же топик, потому что в этом сервисе логика связана только с юзерами
-			capturedUser = nil
+			repo, cache, broker, cap := tt.setup(t)
 
-			cacheCalled = false
-
-			svc := NewUserService(tt.repo, tt.cache, tt.broker, slog.Default(), time.Minute) // даём сервису данные в конструктор для вызова/теста определённого метода
-			u, err := svc.CreateUser(ctx, tt.emailArgument, tt.nameArgument)                 // вызываем сам метод
+			svc := NewUserService(repo, cache, broker, slog.Default(), time.Minute) // даём сервису данные в конструктор для вызова/теста определённого метода
+			u, err := svc.CreateUser(ctx, tt.emailArgument, tt.nameArgument)        // вызываем сам метод
 
 			if tt.wantErr == nil {
 				require.NoError(t, err)
 				assert.NotNil(t, u)
 			} else {
 				require.Error(t, err)
-				assert.Equal(t, tt.wantErr.Error(), err.Error())
+				assert.EqualError(t, err, tt.wantErr.Error())
 			}
 			// !!! ДОБАВЛЯЕМ ПРОВЕРКУ KAFKA !!!
 			if tt.wantKafkaCall {
-				require.NotNil(t, capturedEvent, "ожидалось, что сервис отправит событие в Kafka, но он этого не сделал")
-				assert.Equal(t, "user-events", capturedTopic)
-				assert.Equal(t, domain.UserCreated, capturedEvent)
-				assert.Equal(t, tt.emailArgument, capturedUser.Email)
+				require.NotNil(t, cap.user, "ожидалось, что сервис отправит событие в Kafka, но он этого не сделал")
+				assert.Equal(t, "user-events", cap.topic)
+				assert.Equal(t, domain.UserCreated, cap.event)
+				assert.Equal(t, tt.emailArgument, cap.user.Email)
 			} else {
 				// Убеждаемся, что переменная осталась пустой (брокер не вызывался)
-				require.Nil(t, capturedUser, "сервис не должен был вызывать Kafka, но вызвал")
+				require.Nil(t, cap.user, "сервис не должен был вызывать Kafka, но вызвал")
 			}
 			// !!! ДОБАВЛЯЕМ ПРОВЕРКУ КЕША !!!
 			if tt.wantCacheCall {
-				require.True(t, cacheCalled, "ожидалось, что сервис вызовет метод кеша для сохранения данных, но он этого не сделал")
+				require.True(t, cap.cacheCalled, "ожидалось, что сервис вызовет метод кеша для сохранения данных, но он этого не сделал")
 			} else {
-				require.False(t, cacheCalled, "сервис не должен был вызывать метод кеша, но он это сделал")
+				require.False(t, cap.cacheCalled, "сервис не должен был вызывать метод кеша, но он это сделал")
 			}
 		})
 	}
@@ -296,8 +298,8 @@ func TestService_GetUser(t *testing.T) {
 					assert.NotNil(t, u) // иначе проверяем что пользователь существует
 				}
 			} else {
-				require.Error(t, err)                            // если ожидаем ошибку, проверяем что она есть
-				assert.Equal(t, tt.wantErr.Error(), err.Error()) // проверяем что ошибка совпадает с ожидаемой
+				require.Error(t, err)                         // если ожидаем ошибку, проверяем что она есть
+				assert.EqualError(t, err, tt.wantErr.Error()) // проверяем что ошибка совпадает с ожидаемой
 			}
 		})
 
@@ -308,20 +310,10 @@ func TestService_UpdateUser(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	// для перехвата данных kafka
-	var capturedTopic string
-	var capturedEvent string
-	var capturedUser *domain.User
-
-	// для перехвата ВЫЗОВА кеша
-	var cacheCalled bool
-
 	tests := []struct {
 		nameTest      string
 		user          *domain.User
-		repository    *mocks.UserRepositoryMock
-		cache         *mocks.CacheMock
-		broker        *mocks.EventProducerMock
+		setup         func(t *testing.T) (*mocks.UserRepositoryMock, *mocks.CacheMock, *mocks.EventProducerMock, *capturedData)
 		wantErr       error
 		wantKafkaCall bool // Флаг для определения, ожидаем ли мы отправку в Kafka
 		wantCacheCall bool
@@ -330,36 +322,40 @@ func TestService_UpdateUser(t *testing.T) {
 			// 1. УСПЕШНОЕ ДЕЙСТВИЕ
 			nameTest: "success",
 			user:     &domain.User{ID: 1, Email: "1@email.com", Name: "Test"},
-			repository: &mocks.UserRepositoryMock{
-				UpdateFunc: func(ctx context.Context, user *domain.User) (*domain.User, error) {
-					return user, nil
-				},
-			},
-			cache: &mocks.CacheMock{
-				SetUserFunc: func(ctx context.Context, u *domain.User, ttl time.Duration) error {
-					cacheCalled = true
-					return nil
-
-				},
-			},
-			broker: &mocks.EventProducerMock{
-				PublishUserEventFunc: func(ctx context.Context, topic string, eventType string, event *domain.User) error {
-					capturedTopic = topic
-					capturedEvent = eventType
-					capturedUser = event
-					return nil
-				},
+			setup: func(t *testing.T) (*mocks.UserRepositoryMock, *mocks.CacheMock, *mocks.EventProducerMock, *capturedData) {
+				cap := &capturedData{}
+				repo := &mocks.UserRepositoryMock{
+					UpdateFunc: func(ctx context.Context, user *domain.User) (*domain.User, error) {
+						return user, nil
+					},
+				}
+				cache := &mocks.CacheMock{
+					DeleteUserFunc: func(ctx context.Context, id int64) error {
+						cap.cacheCalled = true
+						return nil
+					},
+				}
+				broker := &mocks.EventProducerMock{
+					PublishUserEventFunc: func(ctx context.Context, topic string, eventType string, event *domain.User) error {
+						cap.topic = topic
+						cap.event = eventType
+						cap.user = event
+						return nil
+					},
+				}
+				return repo, cache, broker, cap
 			},
 			wantErr:       nil,
 			wantKafkaCall: true, // Ожидаем вызов
 			wantCacheCall: true,
 		},
 		{
-			nameTest:      "invalid input",
-			user:          nil,
-			repository:    &mocks.UserRepositoryMock{},
-			cache:         &mocks.CacheMock{},
-			broker:        &mocks.EventProducerMock{},
+			nameTest: "invalid input",
+			user:     nil,
+			setup: func(t *testing.T) (*mocks.UserRepositoryMock, *mocks.CacheMock, *mocks.EventProducerMock, *capturedData) {
+				cap := &capturedData{}
+				return &mocks.UserRepositoryMock{}, &mocks.CacheMock{}, &mocks.EventProducerMock{}, cap
+			},
 			wantErr:       errorsx.ErrInvalidInput,
 			wantKafkaCall: false, // Вызов не ожидаем
 			wantCacheCall: false,
@@ -368,22 +364,26 @@ func TestService_UpdateUser(t *testing.T) {
 			// 2. ОШИБКА БАЗЫ ДАННЫХ
 			nameTest: "repository error",
 			user:     &domain.User{ID: 2, Email: "2@gmail.com", Name: "test"},
-			repository: &mocks.UserRepositoryMock{
-				UpdateFunc: func(ctx context.Context, user *domain.User) (*domain.User, error) {
-					return nil, errors.New("update failed")
-				},
-			},
-			cache: &mocks.CacheMock{
-				SetUserFunc: func(ctx context.Context, u *domain.User, ttl time.Duration) error {
-					t.Fatalf("при ошибке repository, сервис не должен был вызвать метод кеша, но он это сделал!") // если сервис после ошибки бд, попытался вызвать метод кеша, тест упадёт с таким сообщением
-					return nil
-				},
-			},
-			broker: &mocks.EventProducerMock{
-				PublishUserEventFunc: func(ctx context.Context, topic string, eventType string, event *domain.User) error {
-					t.Fatalf("Сервис не должен отправлять событие, если БД вернула ошибку!")
-					return nil
-				},
+			setup: func(t *testing.T) (*mocks.UserRepositoryMock, *mocks.CacheMock, *mocks.EventProducerMock, *capturedData) {
+				cap := &capturedData{}
+				repo := &mocks.UserRepositoryMock{
+					UpdateFunc: func(ctx context.Context, user *domain.User) (*domain.User, error) {
+						return nil, errors.New("update failed")
+					},
+				}
+				cache := &mocks.CacheMock{
+					DeleteUserFunc: func(ctx context.Context, id int64) error {
+						t.Errorf("при ошибке repository, сервис не должен был вызвать метод кеша, но он это сделал!") // если сервис после ошибки бд, попытался вызвать метод кеша, тест упадёт с таким сообщением
+						return nil
+					},
+				}
+				broker := &mocks.EventProducerMock{
+					PublishUserEventFunc: func(ctx context.Context, topic string, eventType string, event *domain.User) error {
+						t.Errorf("Сервис не должен отправлять событие, если БД вернула ошибку!")
+						return nil
+					},
+				}
+				return repo, cache, broker, cap
 			},
 			wantErr:       errors.New("update failed"),
 			wantKafkaCall: false, // Вызов не ожидаем, БД упала
@@ -393,25 +393,29 @@ func TestService_UpdateUser(t *testing.T) {
 			// 3. ОШИБКА БРОКЕРА
 			nameTest: "broker error",
 			user:     &domain.User{ID: 3, Email: "3@email.com", Name: "TestBroker"},
-			repository: &mocks.UserRepositoryMock{
-				UpdateFunc: func(ctx context.Context, user *domain.User) (*domain.User, error) {
-					return user, nil // БД обновляет успешно
-				},
-			},
-			// при ошибке брокера, кеш всё равно должен отрабатывать успешно
-			cache: &mocks.CacheMock{
-				SetUserFunc: func(ctx context.Context, u *domain.User, ttl time.Duration) error {
-					cacheCalled = true
-					return nil
-				},
-			},
-			broker: &mocks.EventProducerMock{
-				PublishUserEventFunc: func(ctx context.Context, topic string, eventType string, event *domain.User) error {
-					capturedTopic = topic
-					capturedEvent = eventType
-					capturedUser = event
-					return errors.New("kafka is down") // Брокер возвращает ошибку
-				},
+			setup: func(t *testing.T) (*mocks.UserRepositoryMock, *mocks.CacheMock, *mocks.EventProducerMock, *capturedData) {
+				cap := &capturedData{}
+				repo := &mocks.UserRepositoryMock{
+					UpdateFunc: func(ctx context.Context, user *domain.User) (*domain.User, error) {
+						return user, nil // БД обновляет успешно
+					},
+				}
+				// при ошибке брокера, кеш всё равно должен отрабатывать успешно
+				cache := &mocks.CacheMock{
+					DeleteUserFunc: func(ctx context.Context, id int64) error {
+						cap.cacheCalled = true
+						return nil
+					},
+				}
+				broker := &mocks.EventProducerMock{
+					PublishUserEventFunc: func(ctx context.Context, topic string, eventType string, event *domain.User) error {
+						cap.topic = topic
+						cap.event = eventType
+						cap.user = event
+						return errors.New("kafka is down") // Брокер возвращает ошибку
+					},
+				}
+				return repo, cache, broker, cap
 			},
 			wantErr:       nil,  // Сервис не должен возвращать ошибку пользователю, если обновление в БД прошло успешно
 			wantKafkaCall: true, // Вызов ожидаем, перехват нужно проверить
@@ -421,24 +425,28 @@ func TestService_UpdateUser(t *testing.T) {
 			// 4. ОШИБКА КЕША
 			nameTest: "cache error during update",
 			user:     &domain.User{ID: 4, Email: "4@gmail.com", Name: "TestCacheErr"},
-			repository: &mocks.UserRepositoryMock{
-				UpdateFunc: func(ctx context.Context, user *domain.User) (*domain.User, error) {
-					return user, nil // БД обновляет успешно
-				},
-			},
-			cache: &mocks.CacheMock{
-				SetUserFunc: func(ctx context.Context, u *domain.User, ttl time.Duration) error {
-					cacheCalled = true
-					return errors.New("redis is down") // Кеш возвращает ошибку
-				},
-			},
-			broker: &mocks.EventProducerMock{
-				PublishUserEventFunc: func(ctx context.Context, topic string, eventType string, event *domain.User) error {
-					capturedTopic = topic
-					capturedEvent = eventType
-					capturedUser = event
-					return nil // Брокер работает успешно, событие отправляется
-				},
+			setup: func(t *testing.T) (*mocks.UserRepositoryMock, *mocks.CacheMock, *mocks.EventProducerMock, *capturedData) {
+				cap := &capturedData{}
+				repo := &mocks.UserRepositoryMock{
+					UpdateFunc: func(ctx context.Context, user *domain.User) (*domain.User, error) {
+						return user, nil // БД обновляет успешно
+					},
+				}
+				cache := &mocks.CacheMock{
+					DeleteUserFunc: func(ctx context.Context, id int64) error {
+						cap.cacheCalled = true // Флаг должен фиксировать вызов DeleteUser, то есть нашу инвалидацию
+						return errors.New("cache error")
+					},
+				}
+				broker := &mocks.EventProducerMock{
+					PublishUserEventFunc: func(ctx context.Context, topic string, eventType string, event *domain.User) error {
+						cap.topic = topic
+						cap.event = eventType
+						cap.user = event
+						return nil // Брокер работает успешно, событие отправляется
+					},
+				}
+				return repo, cache, broker, cap
 			},
 			wantErr:       nil, // не смотря на падение кеша, пользователь всё равно должен получить успешный ответ
 			wantKafkaCall: true,
@@ -448,15 +456,12 @@ func TestService_UpdateUser(t *testing.T) {
 
 	for _, tt := range tests {
 		tt := tt
-		t.Run(tt.nameTest, func(t *testing.T) { // исправлено на func(t *testing.T)
-			// Обнуляем переменные перед каждым тест-кейсом
-			capturedTopic = ""
-			capturedEvent = ""
-			capturedUser = nil
+		t.Run(tt.nameTest, func(t *testing.T) {
+			t.Parallel()
 
-			cacheCalled = false
+			repo, cache, broker, cap := tt.setup(t)
 
-			svc := NewUserService(tt.repository, tt.cache, tt.broker, slog.Default(), time.Minute)
+			svc := NewUserService(repo, cache, broker, slog.Default(), time.Minute)
 			u, err := svc.UpdateUser(ctx, tt.user)
 
 			// 1. Проверяем бизнес-логику сервиса (ошибки и возврат юзера)
@@ -465,46 +470,37 @@ func TestService_UpdateUser(t *testing.T) {
 				assert.NotNil(t, u)
 			} else {
 				require.Error(t, err)
-				assert.Equal(t, tt.wantErr.Error(), err.Error())
+				assert.EqualError(t, err, tt.wantErr.Error())
 			}
 
 			// 2. Проверяем логику отправки в Kafka
 			if tt.wantKafkaCall {
-				// string не может быть nil, поэтому проверяем структуру
-				require.NotNil(t, capturedUser, "ожидалось, что сервис отправит событие в Kafka, но он этого не сделал")
-				assert.Equal(t, "user-events", capturedTopic)
-				assert.Equal(t, domain.UserUpdated, capturedEvent)
-				assert.Equal(t, tt.user.Email, capturedUser.Email)
+				require.NotNil(t, cap.user, "ожидалось, что сервис отправит событие в Kafka, но он этого не сделал")
+				assert.Equal(t, "user-events", cap.topic)
+				assert.Equal(t, domain.UserUpdated, cap.event)
+				assert.Equal(t, tt.user.Email, cap.user.Email)
 			} else {
-				require.Nil(t, capturedUser, "сервис не должен был вызывать Kafka, но вызвал")
+				require.Nil(t, cap.user, "сервис не должен был вызывать Kafka, но вызвал")
 			}
 
 			// 3. Проверяем логику отправик в кеш
 			if tt.wantCacheCall {
-				require.True(t, cacheCalled, "ожидалось, что сервис вызовет метод кеша для обновления данных, но он этого не сделал")
+				require.True(t, cap.cacheCalled, "ожидалось, что сервис вызовет метод кеша для обновления данных, но он этого не сделал")
 			} else {
-				require.False(t, cacheCalled, "сервис не должен был вызывать метод кеша, но он это сделал")
+				require.False(t, cap.cacheCalled, "сервис не должен был вызывать метод кеша, но он это сделал")
 			}
 		})
 	}
 }
 
-func TestServic_DeleteUser(t *testing.T) {
+func TestService_DeleteUser(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-
-	var capturedTopic string
-	var capturedEvent string
-	var capturedUser *domain.User
-
-	var cacheCalled bool
 
 	tests := []struct {
 		nameTest      string
 		id            int64
-		repository    *mocks.UserRepositoryMock
-		cache         *mocks.CacheMock
-		broker        *mocks.EventProducerMock
+		setup         func(t *testing.T) (*mocks.UserRepositoryMock, *mocks.CacheMock, *mocks.EventProducerMock, *capturedData)
 		wantKafkaCall bool
 		wantCacheCall bool
 		wantErr       error
@@ -512,36 +508,40 @@ func TestServic_DeleteUser(t *testing.T) {
 		{
 			nameTest: "success",
 			id:       1,
-			repository: &mocks.UserRepositoryMock{
-				DeleteFunc: func(ctx context.Context, id int64) error {
-					return nil
-				},
-			},
-			cache: &mocks.CacheMock{
-				DeleteUserFunc: func(ctx context.Context, id int64) error {
-					cacheCalled = true
-					return nil
-				},
-			},
-			broker: &mocks.EventProducerMock{
-				PublishUserEventFunc: func(ctx context.Context, topic string, eventType string, event *domain.User) error {
-					capturedTopic = topic
-					capturedEvent = eventType
-					capturedUser = event
-
-					return nil
-				},
+			setup: func(t *testing.T) (*mocks.UserRepositoryMock, *mocks.CacheMock, *mocks.EventProducerMock, *capturedData) {
+				cap := &capturedData{}
+				repo := &mocks.UserRepositoryMock{
+					DeleteFunc: func(ctx context.Context, id int64) error {
+						return nil
+					},
+				}
+				cache := &mocks.CacheMock{
+					DeleteUserFunc: func(ctx context.Context, id int64) error {
+						cap.cacheCalled = true
+						return nil
+					},
+				}
+				broker := &mocks.EventProducerMock{
+					PublishUserEventFunc: func(ctx context.Context, topic string, eventType string, event *domain.User) error {
+						cap.topic = topic
+						cap.event = eventType
+						cap.user = event
+						return nil
+					},
+				}
+				return repo, cache, broker, cap
 			},
 			wantKafkaCall: true,
 			wantCacheCall: true,
 			wantErr:       nil,
 		},
 		{
-			nameTest:      "invalid input",
-			id:            0,
-			repository:    &mocks.UserRepositoryMock{},
-			cache:         &mocks.CacheMock{},
-			broker:        &mocks.EventProducerMock{},
+			nameTest: "invalid input",
+			id:       0,
+			setup: func(t *testing.T) (*mocks.UserRepositoryMock, *mocks.CacheMock, *mocks.EventProducerMock, *capturedData) {
+				cap := &capturedData{}
+				return &mocks.UserRepositoryMock{}, &mocks.CacheMock{}, &mocks.EventProducerMock{}, cap
+			},
 			wantKafkaCall: false,
 			wantCacheCall: false,
 			wantErr:       errorsx.ErrInvalidInput,
@@ -549,22 +549,26 @@ func TestServic_DeleteUser(t *testing.T) {
 		{
 			nameTest: "repository error",
 			id:       1,
-			repository: &mocks.UserRepositoryMock{
-				DeleteFunc: func(ctx context.Context, id int64) error {
-					return errors.New("delete failed")
-				},
-			},
-			cache: &mocks.CacheMock{
-				DeleteUserFunc: func(ctx context.Context, id int64) error {
-					t.Fatalf("при ошибке repository, сервис не должен был вызвать метод кеша, но он это сделал!")
-					return nil
-				},
-			},
-			broker: &mocks.EventProducerMock{
-				PublishUserEventFunc: func(ctx context.Context, topic, eventType string, event *domain.User) error {
-					t.Fatalf("Сервис при ошибке repository, попытался вызвать метод kafka, этого не должно было случиться!")
-					return nil
-				},
+			setup: func(t *testing.T) (*mocks.UserRepositoryMock, *mocks.CacheMock, *mocks.EventProducerMock, *capturedData) {
+				cap := &capturedData{}
+				repo := &mocks.UserRepositoryMock{
+					DeleteFunc: func(ctx context.Context, id int64) error {
+						return errors.New("delete failed")
+					},
+				}
+				cache := &mocks.CacheMock{
+					DeleteUserFunc: func(ctx context.Context, id int64) error {
+						t.Errorf("при ошибке repository, сервис не должен был вызвать метод кеша, но он это сделал!")
+						return nil
+					},
+				}
+				broker := &mocks.EventProducerMock{
+					PublishUserEventFunc: func(ctx context.Context, topic, eventType string, event *domain.User) error {
+						t.Errorf("Сервис при ошибке repository, попытался вызвать метод kafka, этого не должно было случиться!")
+						return nil
+					},
+				}
+				return repo, cache, broker, cap
 			},
 			wantKafkaCall: false,
 			wantCacheCall: false,
@@ -573,24 +577,28 @@ func TestServic_DeleteUser(t *testing.T) {
 		{
 			nameTest: "broker error",
 			id:       1,
-			repository: &mocks.UserRepositoryMock{
-				DeleteFunc: func(ctx context.Context, id int64) error {
-					return nil
-				},
-			},
-			cache: &mocks.CacheMock{
-				DeleteUserFunc: func(ctx context.Context, id int64) error {
-					return nil
-				},
-			},
-			broker: &mocks.EventProducerMock{
-				PublishUserEventFunc: func(ctx context.Context, topic, eventType string, event *domain.User) error {
-					capturedTopic = topic
-					capturedEvent = eventType
-					capturedUser = event
-
-					return errors.New("broker is down")
-				},
+			setup: func(t *testing.T) (*mocks.UserRepositoryMock, *mocks.CacheMock, *mocks.EventProducerMock, *capturedData) {
+				cap := &capturedData{}
+				repo := &mocks.UserRepositoryMock{
+					DeleteFunc: func(ctx context.Context, id int64) error {
+						return nil
+					},
+				}
+				cache := &mocks.CacheMock{
+					DeleteUserFunc: func(ctx context.Context, id int64) error {
+						cap.cacheCalled = true
+						return nil
+					},
+				}
+				broker := &mocks.EventProducerMock{
+					PublishUserEventFunc: func(ctx context.Context, topic, eventType string, event *domain.User) error {
+						cap.topic = topic
+						cap.event = eventType
+						cap.user = event
+						return errors.New("broker is down")
+					},
+				}
+				return repo, cache, broker, cap
 			},
 			wantKafkaCall: true,
 			wantCacheCall: true, // даже при ошибке брокера, кеш должен отрабатывать
@@ -599,24 +607,28 @@ func TestServic_DeleteUser(t *testing.T) {
 		{
 			nameTest: "cache error during delete",
 			id:       1,
-			repository: &mocks.UserRepositoryMock{
-				DeleteFunc: func(ctx context.Context, id int64) error {
-					return nil
-				},
-			},
-			cache: &mocks.CacheMock{
-				DeleteUserFunc: func(ctx context.Context, id int64) error {
-					cacheCalled = true
-					return errors.New("cache is down")
-				},
-			},
-			broker: &mocks.EventProducerMock{
-				PublishUserEventFunc: func(ctx context.Context, topic, eventType string, event *domain.User) error {
-					capturedTopic = topic
-					capturedEvent = eventType
-					capturedUser = event
-					return nil
-				},
+			setup: func(t *testing.T) (*mocks.UserRepositoryMock, *mocks.CacheMock, *mocks.EventProducerMock, *capturedData) {
+				cap := &capturedData{}
+				repo := &mocks.UserRepositoryMock{
+					DeleteFunc: func(ctx context.Context, id int64) error {
+						return nil
+					},
+				}
+				cache := &mocks.CacheMock{
+					DeleteUserFunc: func(ctx context.Context, id int64) error {
+						cap.cacheCalled = true
+						return errors.New("cache is down")
+					},
+				}
+				broker := &mocks.EventProducerMock{
+					PublishUserEventFunc: func(ctx context.Context, topic, eventType string, event *domain.User) error {
+						cap.topic = topic
+						cap.event = eventType
+						cap.user = event
+						return nil
+					},
+				}
+				return repo, cache, broker, cap
 			},
 			wantErr:       nil,
 			wantKafkaCall: true,
@@ -626,35 +638,34 @@ func TestServic_DeleteUser(t *testing.T) {
 	for _, tt := range tests {
 		tt := tt
 		t.Run(tt.nameTest, func(t *testing.T) {
-			// без парралельности, иначе(с парралельностью) у нас например success тест будет заполнять capturedEvent, в ту же миллисекунду invalid input будет обнулять capturedIvent и произойдёт гонка данных
-			capturedTopic = "" // сначала обнуляется, потом ниже выполняется метод, поэтому мы будем проверять уже заполненную, а не пустую переменнуую
-			capturedEvent = ""
-			capturedUser = nil
+			t.Parallel() // Включаем параллельность: изоляция через setup предотвращает Data Race
 
-			cacheCalled = false
+			repo, cache, broker, cap := tt.setup(t)
 
-			svc := NewUserService(tt.repository, tt.cache, tt.broker, slog.Default(), time.Minute)
+			svc := NewUserService(repo, cache, broker, slog.Default(), time.Minute)
 			err := svc.DeleteUser(ctx, tt.id)
 
 			if tt.wantErr == nil {
 				require.NoError(t, err)
 			} else {
 				require.Error(t, err)
-				assert.Equal(t, tt.wantErr.Error(), err.Error())
+				assert.EqualError(t, err, tt.wantErr.Error())
 			}
+			// !!! ДОБАВЛЯЕМ ПРОВЕРКУ KAFKA !!!
 			if tt.wantKafkaCall {
-				require.NotNil(t, capturedEvent, "ожидалось, что сервис отправит событие в Kafka, но он этого не сделал")
-				assert.Equal(t, "user-events", capturedTopic)
-				assert.Equal(t, domain.UserDeleted, capturedEvent)
-				assert.Equal(t, tt.id, capturedUser.ID)
+				require.NotNil(t, cap.user, "ожидалось, что сервис отправит событие в Kafka, но он этого не сделал")
+				assert.Equal(t, "user-events", cap.topic)
+				assert.Equal(t, domain.UserDeleted, cap.event) // Предполагается, что константа называется UserDeleted
+				assert.Equal(t, tt.id, cap.user.ID)            // При удалении обычно передается ID пользователя
 			} else {
-				// Если была ошибка БД, переменная должна остаться пустой, соответственно проверяем пустая ли она, если нет то выводиться сообщение "Событие не должно было формироваться"
-				require.Nil(t, capturedEvent, "Событие не должно было формироваться")
+				require.Nil(t, cap.user, "сервис не должен был вызывать Kafka, но вызвал")
 			}
+
+			// !!! ДОБАВЛЯЕМ ПРОВЕРКУ КЕША !!!
 			if tt.wantCacheCall {
-				require.True(t, cacheCalled, "ожидалось, что сервис вызовет метод кеша для удаления данных, но он этого не сделал")
+				require.True(t, cap.cacheCalled, "ожидалось, что сервис вызовет метод кеша для удаления данных, но он этого не сделал")
 			} else {
-				require.False(t, cacheCalled, "сервис не должен был вызывать метод кеша, но он это сделал")
+				require.False(t, cap.cacheCalled, "сервис не должен был вызывать метод кеша, но он это сделал")
 			}
 		})
 	}

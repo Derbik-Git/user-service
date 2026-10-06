@@ -14,7 +14,10 @@ func TestMain(m *testing.M) { // M - это пакет, используемый
 	// export POSTGRES_DSN=postgres://users_tests:users_tests@localhost:5433/users_tests?sslmode=disable | потом заустить тесты // Формат DSN: postgres://USER:PASSWORD@HOST:PORT/DB_NAME
 	dsn := os.Getenv("POSTGRES_IT_TEST_DSN") // Получаем строку подключения из переменной POSTGRES_TEST_DSN (мы передали её командой export) В продакшене GitHub Actions будет выставлять переменную POSTGRES_IT_TEST_DSN
 	if dsn == "" {
-		log.Fatal("POSTGRES_IT_TEST_DSN is not set")
+		dsn = os.Getenv("POSTGRES_DSN") // Фолбэк на POSTGRES_DSN
+	}
+	if dsn == "" {
+		log.Fatal("POSTGRES_IT_TEST_DSN / POSTGRES_DSN is not set")
 	}
 
 	db, err := sql.Open("postgres", dsn) // Нужно исключительно для запуска миграций, такой же метод для запускам бд есть в репозитории в функции NewStorage
@@ -26,9 +29,11 @@ func TestMain(m *testing.M) { // M - это пакет, используемый
 		log.Fatalf("ping db: %v", err)
 	}
 
+	log.Println("Running migrations from ../../../migrations...")
 	if err := migrate.MigrateUp(db, "../../../migrations"); err != nil { // такой странный путь к миграциям, потому что что бы дойти от internal/repository/postgres дл папки migrations, нужно поднятся на три уровня(../../../migrations)
 		log.Fatalf("migrate up: %v", err)
 	}
+	log.Println("Migrations applied successfully!")
 
 	code := m.Run() // запускает все тесты в пакете и возвращает exit code, который говорит успешно прошли тесты или нет (0 = успешно, любой другой код = ошибки)
 
