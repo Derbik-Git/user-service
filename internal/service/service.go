@@ -22,7 +22,6 @@ type EventProducer interface {
 	PublishUserEvent(ctx context.Context, topic string, eventType string, user *domain.User) error
 }
 
-// менять по мере интеграции новых технологий
 type Service struct {
 	repo   UserRepository
 	cache  cache.Cache

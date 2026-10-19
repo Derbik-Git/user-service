@@ -350,3 +350,28 @@ services:
         condition: service_healthy
     networks:
       - app-network 
+
+  # ==========================================
+  # 6. ТЕСТОВЫЙ РАННЕР
+  # ==========================================
+  test-runner:
+    image: golang:1.25-alpine
+    container_name: user-service-tests
+    working_dir: /app
+    volumes:
+      - .:/app
+    environment:
+      - SERVICE_TEST_POSTGRES_DSN=postgres://users_db:users_db@postgres:5432/users_db?sslmode=disable
+      - SERVICE_TEST_REDIS_ADDR=redis-1:7001,redis-2:7002,redis-3:7003,redis-4:7004,redis-5:7005,redis-6:7006
+      - SERVICE_TEST_KAFKA_BROKERS=kafka-1:9092,kafka-2:9092,kafka-3:9092
+    networks:
+      - app-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrator:
+        condition: service_completed_successfully
+      redis-cluster-init:
+        condition: service_completed_successfully
+      init-kafka:
+        condition: service_completed_successfully
