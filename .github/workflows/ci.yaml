@@ -1,0 +1,27 @@
+name: CI Integration Tests
+
+# Указываем, когда запускать проверки
+on:
+  push:
+    branches: [ "main", "master", "develop" ]
+  pull_request:
+    branches: [ "main", "master", "develop" ]
+
+jobs:
+  run-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Скачиваем твой код из репозитория
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. Проверяем, что Docker и Docker Compose доступны на сервере GitHub
+      - name: Check Docker version
+        run: |
+          docker --version
+          docker compose version
+
+      # 3. Запускаем тесты ровно так же, как ты делаешь это локально через Makefile!
+      - name: Run make test-all
+        run: make test-all
