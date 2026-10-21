@@ -50,28 +50,34 @@ func authCtx(userID int64) context.Context {
 func TestMain(m *testing.M) {
 	fmt.Println(">>> DEBUG: TestMain ЗАПУСТИЛСЯ <<<")
 
-	dsn := os.Getenv("POSTGRES_DSN")
-	if dsn == "" {
+	masterDSN := os.Getenv("POSTGRES_MASTER_DSN")
+	if masterDSN == "" {
 		// Подстраховка: дефолтный DSN для локального Docker
-		dsn = "postgres://users_db:users_db@localhost:5433/users_db?sslmode=disable"
+		masterDSN = "postgres://users_db:users_db@localhost:5433/users_db?sslmode=disable"
 	}
 
-	db, err := sql.Open("pgx", dsn)
+	slaveDSN := os.Getenv("POSTGRES_SLAVE_DSN")
+	if slaveDSN == "" {
+		// Подстраховка: дефолтный DSN для локального Docker
+		slaveDSN = "postgres://users_db:users_db@localhost:5433/users_db?sslmode=disable"
+	}
+
+	dbMigrate, err := sql.Open("pgx", masterDSN) // нужно только для наката миграций
 	if err != nil {
 		log.Fatalf("failed to open db for migrations: %v", err)
 	}
 
 	migrationsPath := "../../../../migrations"
 
-	if err := migrate.MigrateUp(db, migrationsPath); err != nil {
+	if err := migrate.MigrateUp(dbMigrate, migrationsPath); err != nil {
 		log.Fatalf("failed to apply migrations in test: %v", err)
 	}
-	db.Close()
+	dbMigrate.Close()
 
-	postg, err := postgres.NewStorage(dsn)
+	postg, err := postgres.NewStorage(masterDSN, slaveDSN)
 	if err != nil {
 		// Выводим РЕАЛЬНУЮ ошибку подключения %v
-		log.Fatalf("failed to connect to postgres (dsn=%s): %v", dsn, err)
+		log.Fatalf("failed to connect to postgres (masterDSN=%s, slaveDSN=%s): %v", masterDSN, slaveDSN, err)
 	}
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))

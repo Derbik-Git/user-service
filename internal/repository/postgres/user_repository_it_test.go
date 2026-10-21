@@ -15,7 +15,7 @@ import (
 )
 
 func cleanUsersTable(ctx context.Context, s *Storage) error {
-	_, err := s.db.ExecContext(ctx, "TRUNCATE TABLE users RESTART IDENTITY CASCADE") // TRUNCATE — мгновенно очищает таблицу  RESTART IDENTITY — сбрасывает GENERATED AS IDENTITY  CASCADE — на будущее (если появятся FK)
+	_, err := s.dbMaster.ExecContext(ctx, "TRUNCATE TABLE users RESTART IDENTITY CASCADE") // TRUNCATE — мгновенно очищает таблицу  RESTART IDENTITY — сбрасывает GENERATED AS IDENTITY  CASCADE — на будущее (если появятся FK)
 	return err
 }
 
@@ -26,15 +26,20 @@ func createRandomUser(ctx context.Context, s *Storage) (*domain.User, error) {
 func TestPostgres_UserRepository_Integration(t *testing.T) {
 	t.Parallel()
 
-	dsn := os.Getenv("POSTGRES_IT_TEST_DSN")
-	if dsn == "" {
+	masterDSN := os.Getenv("POSTGRES_MASTER_DSN")
+	if masterDSN == "" {
+		t.Fatal("POSTGRES_DSN is not set")
+	}
+
+	slaveDSN := os.Getenv("POSTGRES_SLAVE_DSN")
+	if slaveDSN == "" {
 		t.Fatal("POSTGRES_DSN is not set")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	store, err := NewStorage(dsn)
+	store, err := NewStorage(masterDSN, slaveDSN)
 	require.NoError(t, err) // если err != nil, то тест завершается с ошибкой
 	defer store.Close()
 

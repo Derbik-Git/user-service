@@ -17,7 +17,9 @@ type Config struct {
 	GRPCPort int `env:"GRPC_PORT" env-default:"50051"`
 
 	// env-required:"true" - если при запуске нет переменной POSTGRES_DSN, программа сразу упадет с ошибкой
-	PostgresDSN string `env:"POSTGRES_DSN" env-required:"true"`
+	MasterPostgresDSN string `env:"POSTGRES_MASTER_DSN" env-required:"true"`
+
+	SlavePostgresDSN string `env:"POSTGRES_SLAVE_DSN" env-required:"true"`
 
 	// env:"REDIS_ADDRS" - cleanenv сам разобьет строку "host1,host2" на массив строк!
 	RedisAddres []string `env:"REDIS_ADDRS"`
@@ -48,7 +50,7 @@ func main() {
 
 	logger.Info("condig load", slog.Int("port", cfg.GRPCPort))
 
-	application, cleanup := appassembling.NewAppMain(logger, cfg.GRPCPort, cfg.PostgresDSN, cfg.RedisAddres, cfg.KafkaBrokers, cfg.CacheTTL, nil, cfg.JWTSecret)
+	application, cleanup := appassembling.NewAppMain(logger, cfg.GRPCPort, cfg.MasterPostgresDSN, cfg.SlavePostgresDSN, cfg.RedisAddres, cfg.KafkaBrokers, cfg.CacheTTL, nil, cfg.JWTSecret)
 	defer func() {
 		logger.Info("running cleanup tasks...")
 		// Вызываем функцию cleanup(), которую нам вернул NewAppMain.

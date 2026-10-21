@@ -18,14 +18,14 @@ type App struct {
 	GRPCSrv *app.App
 }
 
-func NewAppMain(log *slog.Logger, grpcPort int, postgresDSN string, redisAddrs []string, kafkaBrokers []string, cacheTTL time.Duration, opts *redis.ClusterOptions, jwtSecret string) (*App, func() error) {
+func NewAppMain(log *slog.Logger, grpcPort int, postgresMasterDSN, postgresSlaveDSN string, redisAddrs []string, kafkaBrokers []string, cacheTTL time.Duration, opts *redis.ClusterOptions, jwtSecret string) (*App, func() error) {
 	const op = "app_main.NewAppMain"
 
 	if log == nil {
 		log = slog.Default()
 	}
 
-	repo, err := postgres.NewStorage(postgresDSN)
+	repo, err := postgres.NewStorage(postgresMasterDSN, postgresSlaveDSN)
 	if err != nil {
 		panic(err)
 	}

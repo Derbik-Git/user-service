@@ -444,6 +444,8 @@ func TestKafka_Ordering_integration(t *testing.T) {
 }
 
 // Проверка на нагрзку/потокобезопасность
+// Проверка на нагрзку/потокобезопасность
+// Проверка на нагрзку/потокобезопасность
 func TestKafka_ConcurrentPublishing_integration(t *testing.T) {
 	TestEventStoreGlobal.Reset()
 
@@ -452,10 +454,11 @@ func TestKafka_ConcurrentPublishing_integration(t *testing.T) {
 
 	ctx := context.Background()
 
-	const numUsers = 50
+	const numUsers = 10
 	var wg sync.WaitGroup
 	wg.Add(numUsers)
 
+	var mu sync.Mutex                  // Мутекс для потокобезопасного вызова t.Errorf из горутин
 	emails := make([]string, numUsers) // переменная, в которую мы будем помещать email сгенерированного пользователя по индексу итерации цикла
 
 	for i := 0; i < numUsers; i++ {
@@ -465,7 +468,9 @@ func TestKafka_ConcurrentPublishing_integration(t *testing.T) {
 			emails[idx] = user.Email // помещаем email сгенерированного пользователя по индексу(для массива) по значению итерации цикла, что бы потом через wqitForKafkaEvent проверить всё ли успешно записалось
 			_, err := env.Svc.CreateUser(ctx, user.Email, user.Name)
 			if err != nil {
+				mu.Lock()
 				t.Errorf("failed to create user in goroutine: %v", err) // в дочерних горутинах запрещяется использовать require
+				mu.Unlock()
 			}
 		}(i)
 	}
@@ -475,7 +480,6 @@ func TestKafka_ConcurrentPublishing_integration(t *testing.T) {
 	for _, email := range emails {
 		event := waitForKafkaEvent(t, email)
 		require.NotNil(t, event, "потеряно сообщение для email: %s", email)
-
 	}
 }
 

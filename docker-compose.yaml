@@ -23,7 +23,7 @@ services:
     networks:
       - app-network
     depends_on:
-      postgres:
+      postgres-primary:
         condition: service_healthy
       migrator:
         condition: service_completed_successfully
@@ -43,24 +43,108 @@ services:
         condition: service_started
 
   # ==========================================
-  # 2. БАЗЫ ДАННЫХ И КЭШ
+  # 2. БАЗЫ ДАННЫХ (МАСШТАБИРОВАНИЕ) И КЭШ (МАСШТАБИРОВАНИЕ)
   # ==========================================
-  postgres:
+  postgres-primary:
     image: postgres:16
-    container_name: user-service-postgres
+    container_name: postgres-primary
     environment:
       POSTGRES_USER: users_db
       POSTGRES_PASSWORD: users_db
       POSTGRES_DB: users_db
+      POSTGRES_HOST_AUTH_METHOD: md5
+      POSTGRES_INITDB_ARGS: "--auth=md5"
+    entrypoint: ["bash", "-c"]
+    command:
+      - |
+        docker-entrypoint.sh postgres -c wal_level=replica -c max_wal_senders=10 -c max_replication_slots=10 -c password_encryption=md5 &
+        PID=$$!
+        
+        until [ -f /var/lib/postgresql/data/pg_hba.conf ]; do
+          sleep 1
+        done
+        
+        echo "host replication users_db 0.0.0.0/0 md5" >> /var/lib/postgresql/data/pg_hba.conf
+        pg_ctl -D /var/lib/postgresql/data reload
+        
+        wait $$PID
     ports:
-      - "5433:5432"
+      - "5432:5432"
     networks:
       - app-network
+    volumes:
+      - pgdata-primary:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U users_db"]
       interval: 5s
       timeout: 5s
       retries: 5
+
+  postgres-replica:
+    image: postgres:16
+    container_name: postgres-replica
+    environment:
+      POSTGRES_USER: users_db
+      POSTGRES_PASSWORD: users_db
+      POSTGRES_DB: users_db
+    command: |
+      bash -c "
+        # Полная очистка директории данных
+        find /var/lib/postgresql/data -mindepth 1 -delete
+        
+        echo 'Ожидание готовности мастера для бэкапа репликации...'
+        until PGPASSWORD=users_db pg_basebackup -h postgres-primary -p 5432 -U users_db -D /var/lib/postgresql/data -Fp -Xs -P -R; do
+          echo 'Мастер еще не готов, повторная попытка через 2 секунды...'
+          sleep 2
+        done
+        
+        # Назначаем права пользователя postgres на директорию с данными
+        chown -R postgres:postgres /var/lib/postgresql/data
+        chmod 0700 /var/lib/postgresql/data
+        
+        # Запускаем PostgreSQL от имени непривилегированного пользователя postgres
+        exec gosu postgres postgres
+      "
+    ports:
+      - "5433:5432"
+    networks:
+      - app-network
+    volumes:
+      - pgdata-replica:/var/lib/postgresql/data
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U users_db"]
+      interval: 3s
+      timeout: 3s
+      retries: 15
+      start_period: 20s
+
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    container_name: pgbouncer
+    environment:
+      - DB_HOST=postgres-primary
+      - DB_USER=users_db
+      - DB_PASSWORD=users_db
+      - DB_NAME=users_db
+      - LISTEN_PORT=6432          # <--- Явно указываем слушать порт 6432 изнутри
+      - POOL_MODE=transaction
+      - MAX_CLIENT_CONN=100
+      - DEFAULT_POOL_SIZE=20
+    ports:
+      - "6432:6432"
+    networks:
+      - app-network
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h localhost -p 6432"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
 
   # ==========================================
   # REDIS CLUSTER (3 Мастера)
@@ -192,6 +276,7 @@ services:
       retries: 5
 
   # Инициализатор кластера Redis
+  # Инициализатор кластера Redis
   redis-cluster-init:
     image: redis:7.2-alpine
     container_name: redis-cluster-init
@@ -213,9 +298,10 @@ services:
     command: >
       sh -c "
         echo 'Ждем запуск узлов Redis...'
-        sleep 2
-        redis-cli --cluster create redis-1:7001 redis-2:7002 redis-3:7003 redis-4:7004 redis-5:7005 redis-6:7006 --cluster-replicas 1 --cluster-yes
-        echo 'Redis Cluster создан!'
+        sleep 3
+        echo 'Создаем кластер Redis...'
+        yes yes | redis-cli --cluster create redis-1:7001 redis-2:7002 redis-3:7003 redis-4:7004 redis-5:7005 redis-6:7006 --cluster-replicas 1
+        echo 'Redis Cluster успешно создан!'
       "
 
   # ==========================================
@@ -344,12 +430,12 @@ services:
   migrator:
     build: .
     entrypoint: ["/root/migrator"]
-    command: ["-dsn", "postgres://users_db:users_db@postgres:5432/users_db?sslmode=disable"]
+    command: ["-dsn", "postgres://users_db:users_db@postgres-primary:5432/users_db?sslmode=disable"]
     depends_on:
-      postgres:
+      postgres-primary:
         condition: service_healthy
     networks:
-      - app-network 
+      - app-network
 
   # ==========================================
   # 6. ТЕСТОВЫЙ РАННЕР
@@ -360,18 +446,30 @@ services:
     working_dir: /app
     volumes:
       - .:/app
+      - go-mod-cache:/go/pkg/mod   # <--- Кеш Go-модулей, чтобы не качать заново
     environment:
-      - SERVICE_TEST_POSTGRES_DSN=postgres://users_db:users_db@postgres:5432/users_db?sslmode=disable
+      - SERVICE_TEST_POSTGRES_DSN=postgres://users_db:users_db@pgbouncer:6432/users_db?sslmode=disable
+      - POSTGRES_MASTER_DSN=postgres://users_db:users_db@pgbouncer:6432/users_db?sslmode=disable
+      - POSTGRES_SLAVE_DSN=postgres://users_db:users_db@postgres-replica:5432/users_db?sslmode=disable
       - SERVICE_TEST_REDIS_ADDR=redis-1:7001,redis-2:7002,redis-3:7003,redis-4:7004,redis-5:7005,redis-6:7006
       - SERVICE_TEST_KAFKA_BROKERS=kafka-1:9092,kafka-2:9092,kafka-3:9092
     networks:
       - app-network
     depends_on:
-      postgres:
+      postgres-primary:
         condition: service_healthy
+      postgres-replica:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy   # <--- Ждем, пока PgBouncer полностью готов принимать трафик
       migrator:
         condition: service_completed_successfully
       redis-cluster-init:
         condition: service_completed_successfully
       init-kafka:
         condition: service_completed_successfully
+
+volumes:
+  pgdata-primary:
+  pgdata-replica:
+  go-mod-cache:

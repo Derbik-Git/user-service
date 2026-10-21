@@ -27,7 +27,8 @@ import (
 )
 
 const (
-	SERVICE_TEST_POSTGRES_DSN  = "SERVICE_TEST_POSTGRES_DSN"
+	POSTGRES_MASTER_DSN        = "POSTGRES_MASTER_DSN"
+	POSTGRES_SLAVE_DSN         = "POSTGRES_SLAVE_DSN"
 	SERVICE_TEST_REDIS_ADDR    = "SERVICE_TEST_REDIS_ADDR"
 	SERVICE_TEST_KAFKA_BROKERS = "SERVICE_TEST_KAFKA_BROKERS"
 )
@@ -172,24 +173,36 @@ func waitForKafkaEventBatch(t *testing.T, targetID int64, expectedCount int) []d
 // Поскольку тесты запускаются параллельно (t.Parallel()), все они будут писать события в один топик test-topic-user-events. Чтобы тесты не мешали друг другу, нам нужно "складывать" все прочитанные консюмером события в потокобезопасное хранилище, где каждый тест сможет найти своё событие по уникальному Email или ID.
 
 // для запуска PostgreSQL требуется 2-5 секунд, в то время как наше приложение обращается к нему сразу(в случае если бд не успела открыться, приложение сразу будет падать, поэтому нам и нужна эта функция для ожидания полного подключения бд)
-func waitForPostgres(dsn string) (*postgres.Storage, error) { // возвращаем структуру с соединением у бд, после ожидания её полной готовности
-	for i := 0; i < 10; i++ {
-		repo, err := postgres.NewStorage(dsn)
-		if err == nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
-			pingErr := repo.DB().PingContext(ctx)
-			cancel()
+func waitForPostgres(masterDSN, slaveDSN string) (*postgres.Storage, error) {
+	var lastErr error
+	log.Println("Начало ожидания готовности PostgreSQL (Master & Slave)...")
 
-			if pingErr == nil {
-				return repo, nil
-			}
+	for i := 0; i < 30; i++ {
+		log.Printf("Попытка подключения #%d...", i+1)
+		repo, err := postgres.NewStorage(masterDSN, slaveDSN)
+		if err != nil {
+			lastErr = err
+			log.Printf("Ошибка NewStorage на попытке %d: %v", i+1, err)
+			time.Sleep(time.Second)
+			continue
 		}
 
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		pingErr := repo.DB().PingContext(ctx)
+		cancel()
+
+		if pingErr == nil {
+			log.Println("PostgreSQL успешно готов и доступен!")
+			return repo, nil
+		}
+
+		lastErr = pingErr
+		log.Printf("Ошибка PingContext на попытке %d: %v", i+1, pingErr)
+		repo.Close() // Закрываем неудачное соединение, чтобы не плодить утечки
 		time.Sleep(time.Second)
 	}
 
-	return nil, errors.New("postgres not ready after retries")
-
+	return nil, fmt.Errorf("postgres not ready after retries: %v", lastErr)
 }
 
 func waitForKafka(brokers []string) error {
@@ -254,9 +267,14 @@ func TestMain(m *testing.M) {
 		log.Println("Не удалось загрузить .env файл по пути ../../../.env, попробуем ../../.env")
 	}
 
-	dsn := os.Getenv(SERVICE_TEST_POSTGRES_DSN)
-	if dsn == "" {
-		log.Fatalf("%s not set", SERVICE_TEST_POSTGRES_DSN)
+	masterDSN := os.Getenv(POSTGRES_MASTER_DSN)
+	if masterDSN == "" {
+		log.Fatalf("%s not set", POSTGRES_MASTER_DSN)
+	}
+
+	slaveDSN := os.Getenv(POSTGRES_SLAVE_DSN)
+	if slaveDSN == "" {
+		log.Fatalf("%s not set", POSTGRES_SLAVE_DSN)
 	}
 
 	redisAddr := os.Getenv(SERVICE_TEST_REDIS_ADDR)
@@ -280,7 +298,7 @@ func TestMain(m *testing.M) {
 	testTopic := domain.TopicUserEvents // "user-events"
 	createKafkaTopic(testBrokers[0], testTopic)
 
-	repo, err := waitForPostgres(dsn)
+	repo, err := waitForPostgres(masterDSN, slaveDSN)
 	if err != nil {
 		log.Fatal(err)
 	}

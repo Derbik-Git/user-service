@@ -21,7 +21,7 @@ down:
 
 # 3. Поднять ТОЛЬКО инфраструктуру (БД, Kafka, Redis) — для написания и отладки кода
 infra-up:
-	docker compose up -d postgres kafka-1 kafka-2 kafka-3 redis-1 redis-2 redis-3 redis-cluster-init init-kafka
+	docker compose up -d postgres-primary kafka-1 kafka-2 kafka-3 redis-1 redis-2 redis-3 redis-cluster-init init-kafka
 	@echo Waiting 12 seconds for cluster initialization...
 	@$(SLEEP_CMD)
 	@echo Infrastructure is ready!
